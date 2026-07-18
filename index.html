@@ -7,19 +7,23 @@
 <link rel="manifest" href="./manifest.webmanifest" />
 <meta name="theme-color" content="#181c22" />
 
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<!-- Todas las librerías están auto-hospedadas en este mismo repositorio
+     (archivos "vendor-*"), sin depender de ningún servidor externo.
+     Esto evita fallos por conexión inestable en campo: solo se
+     necesita acceso a esta misma página. -->
+<link rel="stylesheet" href="./vendor-leaflet.css" />
+<script src="./vendor-leaflet.js"></script>
 
 <!-- Agrupamiento visual (clustering) de puntos: evita que el mapa se
      vuelva lento al acumular miles de postes de varias zonas -->
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css" />
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css" />
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+<link rel="stylesheet" href="./vendor-MarkerCluster.css" />
+<link rel="stylesheet" href="./vendor-MarkerCluster.Default.css" />
+<script src="./vendor-leaflet.markercluster.js"></script>
 
 <!-- Librerías de parseo de formatos GIS de entrada (Módulo 2) -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="https://unpkg.com/[email protected]/togeojson.js"></script>
-<script src="https://unpkg.com/[email protected]/dist/shp.js"></script>
+<script src="./vendor-jszip.min.js"></script>
+<script src="./vendor-togeojson.js"></script>
+<script src="./vendor-shp.min.js"></script>
 
 <style>
   :root{
