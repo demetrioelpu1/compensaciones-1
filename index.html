@@ -411,11 +411,12 @@
         </label>
       </div>
       <div class="layers-panel-body" id="layers-panel-body">
-        <!-- Las 5 tarjetas de capa (Postes BT, Postes MT, Subestaciones,
-             Tramos MT, Tramos BT) se generan dinámicamente por GISLayerService -->
+        <!-- Intencionalmente vacío: la vista de tarjetas individuales
+             se retiró a pedido. GISLayerService sigue administrando
+             las 5 capas internamente (visibles por defecto). -->
       </div>
       <div class="layers-panel-footer">
-        <p>Toca "Cargar archivos de la red" y selecciona todos los KMZ/SHP a la vez desde WhatsApp o tus Descargas — la app los identifica solos por su nombre (BT, MT, SED, tramos). Si un nombre es ambiguo, te preguntará a qué capa pertenece.</p>
+        <p>Toca "Cargar archivos de la red" y selecciona todos los KMZ/SHP a la vez desde WhatsApp o tus Descargas — la app los identifica solos por su nombre (BT, MT, SED, tramos) y los dibuja en el mapa.</p>
       </div>
     </aside>
 
@@ -1069,52 +1070,11 @@ class LayerPanelController {
   }
 
   _render(summary) {
-    this.body.innerHTML = '';
-
-    summary.forEach(cat => {
-      const card = document.createElement('div');
-      card.className = 'layer-card';
-
-      const swatchClass = cat.geomKind === 'line' ? 'layer-swatch line-swatch' : 'layer-swatch';
-      const swatchShape = cat.geomKind === 'line' ? '' : (cat.shape === 'square' ? 'transform:rotate(45deg);' : (cat.shape === 'triangle' ? 'border-radius:0 0 3px 0;' : 'border-radius:50%;'));
-
-      card.innerHTML = `
-        <div class="layer-card-top">
-          <div class="${swatchClass}" style="background:${cat.color};${swatchShape}"></div>
-          <div class="layer-card-name">${cat.label}</div>
-          <div class="layer-count">${cat.count}</div>
-          <div class="layer-toggle ${cat.visible ? 'on' : ''}" data-action="toggle"><div class="knob"></div></div>
-        </div>
-        ${cat.fileName
-          ? `<div class="layer-card-file">
-               <span class="layer-card-filename">${this._truncate(cat.fileName)}</span>
-               <button class="layer-btn danger" data-action="clear" title="Quitar capa">
-                 <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>
-               </button>
-             </div>`
-          : `<div class="layer-card-empty">Sin datos cargados</div>`
-        }
-      `;
-
-      card.querySelector('[data-action="toggle"]').addEventListener('click', () => {
-        this.gisLayerService.toggleCategory(cat.id);
-      });
-
-      const clearBtn = card.querySelector('[data-action="clear"]');
-      if (clearBtn) {
-        clearBtn.addEventListener('click', () => this.gisLayerService.clearCategory(cat.id));
-      }
-
-      this.body.appendChild(card);
-    });
-
+    // La vista de tarjetas por capa se retiró a pedido: solo se
+    // mantiene el contador total en el badge del botón flotante.
     const total = this.gisLayerService.getTotalFeatureCount();
     this.badge.textContent = total;
     this.badge.classList.toggle('hidden', total === 0);
-  }
-
-  _truncate(name) {
-    return name.length > 30 ? name.slice(0, 27) + '…' : name;
   }
 
   _toast(msg) {
