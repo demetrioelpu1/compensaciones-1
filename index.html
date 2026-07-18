@@ -10,6 +10,12 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 
+<!-- Agrupamiento visual (clustering) de puntos: evita que el mapa se
+     vuelva lento al acumular miles de postes de varias zonas -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+
 <!-- Librerías de parseo de formatos GIS de entrada (Módulo 2) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://unpkg.com/[email protected]/togeojson.js"></script>
@@ -220,6 +226,35 @@
     flex:1; overflow-y:auto; padding:10px 12px;
   }
 
+  .layers-section-title{
+    font-size:10.5px; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+    color:var(--text-dim); margin:4px 2px 8px;
+  }
+
+  .layer-chip{
+    display:flex; align-items:center; gap:10px;
+    background:var(--bar-bg-2); border:1px solid var(--line);
+    border-radius:10px; padding:11px 12px; margin-bottom:8px;
+  }
+  .layer-chip.empty{ opacity:.55; }
+  .chip-dot{
+    width:12px; height:12px; border-radius:50%; flex-shrink:0;
+    box-shadow:0 0 0 1px rgba(255,255,255,.08);
+  }
+  .chip-dot.line-dot{ border-radius:2px; height:4px; align-self:center; }
+  .chip-label{
+    flex:1; font-size:12.5px; font-weight:600; color:var(--text);
+    display:flex; flex-direction:column; gap:1px;
+  }
+  .chip-label small{
+    font-size:9.5px; font-weight:400; color:var(--text-dim); font-family:var(--mono);
+  }
+  .chip-count{
+    font-family:var(--mono); font-size:10px; color:var(--text-dim);
+    background:#181c22; border:1px solid var(--line); border-radius:10px;
+    padding:2px 7px; flex-shrink:0;
+  }
+
   .layers-panel-bulk{
     padding:12px 12px 4px; flex-shrink:0;
   }
@@ -240,6 +275,17 @@
     display:block; font-size:10px; color:var(--text-dim); margin-top:2px; line-height:1.3;
   }
   .bulk-upload-btn input[type=file]{ display:none; }
+
+  .bulk-clear-btn{
+    width:100%; margin-top:8px;
+    display:flex; align-items:center; justify-content:center; gap:7px;
+    background:transparent; border:1px solid rgba(228,87,46,.35);
+    border-radius:9px; padding:9px; cursor:pointer;
+    font-size:11.5px; font-weight:600; color:var(--danger);
+    font-family:var(--sans);
+  }
+  .bulk-clear-btn:active{ background:rgba(228,87,46,.1); }
+  .bulk-clear-btn svg{ flex-shrink:0; }
 
   .layer-card{
     background:var(--bar-bg-2);
@@ -409,14 +455,18 @@
           </span>
           <input type="file" id="bulk-file-input" accept=".kmz,.kml,.zip,.geojson,.json" multiple />
         </label>
+
+        <button class="bulk-clear-btn" id="btn-clear-network">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>
+          <span>Limpiar red cargada</span>
+        </button>
       </div>
       <div class="layers-panel-body" id="layers-panel-body">
-        <!-- Intencionalmente vacío: la vista de tarjetas individuales
-             se retiró a pedido. GISLayerService sigue administrando
-             las 5 capas internamente (visibles por defecto). -->
+        <div class="layers-section-title">Capas visibles</div>
+        <div id="layer-chips-list"></div>
       </div>
       <div class="layers-panel-footer">
-        <p>Toca "Cargar archivos de la red" y selecciona todos los KMZ/SHP a la vez desde WhatsApp o tus Descargas — la app los identifica solos por su nombre (BT, MT, SED, tramos) y los dibuja en el mapa.</p>
+        <p>Cada carga se SUMA a lo que ya tienes (no lo reemplaza), así puedes acumular varias zonas. Usa los interruptores para mostrar/ocultar cada capa sin perder los datos.</p>
       </div>
     </aside>
 
@@ -881,14 +931,24 @@ class GISLayerService {
     this.map = map;
     this.loaderService = loaderService;
 
-    // Estado por categoría: { group, visible, count, fileName }
+    // Estado por categoría: { group, visible, count, fileNames }
     this.state = {};
     GISLayerService.CATEGORIES.forEach(cat => {
       this.state[cat.id] = {
-        group: L.layerGroup(), // se agrega/quita del mapa según visibilidad
+        // Puntos (postes, subestaciones) usan un grupo con clustering
+        // para no perder rendimiento al acumular varias zonas cargadas.
+        // Líneas (tramos) usan un LayerGroup normal.
+        group: cat.geomKind === 'point'
+          ? L.markerClusterGroup({
+              maxClusterRadius: 55,
+              spiderfyOnMaxZoom: true,
+              disableClusteringAtZoom: 19,
+              iconCreateFunction: (cluster) => this._buildClusterIcon(cluster, cat),
+            })
+          : L.layerGroup(),
         visible: true,
         count: 0,
-        fileName: null,
+        fileNames: [],
       };
     });
 
@@ -903,16 +963,19 @@ class GISLayerService {
       ...cat,
       count: this.state[cat.id].count,
       visible: this.state[cat.id].visible,
-      fileName: this.state[cat.id].fileName,
+      fileNames: this.state[cat.id].fileNames,
     }));
   }
 
+  /**
+   * Carga un archivo y lo ACUMULA sobre lo que ya existía en esa
+   * categoría (no reemplaza). Así se pueden ir sumando varias zonas
+   * de trabajo sin perder lo cargado previamente.
+   */
   async loadFileIntoCategory(categoryId, file) {
     const geojson = await this.loaderService.parseFile(file);
     const cat = GISLayerService.CATEGORIES.find(c => c.id === categoryId);
     const st = this.state[categoryId];
-
-    st.group.clearLayers();
 
     const leafletLayer = L.geoJSON(geojson, {
       pointToLayer: (feature, latlng) => this._buildPointMarker(latlng, cat),
@@ -922,15 +985,14 @@ class GISLayerService {
 
     let featureCount = 0;
     leafletLayer.eachLayer(() => featureCount++);
-
     leafletLayer.eachLayer(l => st.group.addLayer(l));
 
-    st.count = featureCount;
-    st.fileName = file.name;
+    st.count += featureCount; // se suma a lo ya cargado, no se reemplaza
+    st.fileNames.push(file.name);
 
-    if (st.visible) st.group.addTo(this.map);
+    if (st.visible && !this.map.hasLayer(st.group)) st.group.addTo(this.map);
 
-    // Encuadrar el mapa a la capa recién cargada
+    // Encuadrar el mapa a lo recién cargado
     const bounds = leafletLayer.getBounds();
     if (bounds.isValid()) {
       this.map.fitBounds(bounds, { padding: [40, 40], maxZoom: 18 });
@@ -944,7 +1006,17 @@ class GISLayerService {
     const st = this.state[categoryId];
     st.group.clearLayers();
     st.count = 0;
-    st.fileName = null;
+    st.fileNames = [];
+    this._notify();
+  }
+
+  clearAll() {
+    Object.keys(this.state).forEach((categoryId) => {
+      const st = this.state[categoryId];
+      st.group.clearLayers();
+      st.count = 0;
+      st.fileNames = [];
+    });
     this._notify();
   }
 
@@ -961,6 +1033,23 @@ class GISLayerService {
 
   getTotalFeatureCount() {
     return Object.values(this.state).reduce((sum, s) => sum + s.count, 0);
+  }
+
+  _buildClusterIcon(cluster, cat) {
+    const count = cluster.getChildCount();
+    const size = count < 10 ? 32 : count < 100 ? 38 : 46;
+    return L.divIcon({
+      className: '',
+      html: `<div style="
+        width:${size}px;height:${size}px;border-radius:50%;
+        background:${cat.color};color:#0e1116;
+        display:flex;align-items:center;justify-content:center;
+        font-family:var(--mono);font-weight:700;font-size:${count < 100 ? 12 : 11}px;
+        border:2px solid #0e1116;box-shadow:0 0 10px ${cat.color}88;
+      ">${count}</div>`,
+      iconSize: [size, size],
+      iconAnchor: [size / 2, size / 2],
+    });
   }
 
   _buildPointMarker(latlng, cat) {
@@ -1022,10 +1111,12 @@ class LayerPanelController {
     this.badge = document.getElementById('layers-badge');
     this.toastEl = document.getElementById('toast');
     this.bulkInput = document.getElementById('bulk-file-input');
+    this.btnClearNetwork = document.getElementById('btn-clear-network');
 
     this.btnToggle.addEventListener('click', () => this._togglePanel());
     this.btnClose.addEventListener('click', () => this._togglePanel(false));
     this.bulkInput.addEventListener('change', (e) => this._handleBulkUpload(e));
+    this.btnClearNetwork.addEventListener('click', () => this._handleClearAll());
 
     this.gisLayerService.onChange((summary) => this._render(summary));
     this._render(this.gisLayerService.getSummary());
@@ -1063,6 +1154,23 @@ class LayerPanelController {
     if (msg) this._toast(msg);
   }
 
+  _handleClearAll() {
+    const total = this.gisLayerService.getTotalFeatureCount();
+
+    if (total === 0) {
+      this._toast('No hay red cargada para limpiar.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Se eliminarán las ${total} entidades cargadas (postes, subestaciones y tramos) para poder cargar otra zona. ¿Continuar?`
+    );
+    if (!confirmed) return;
+
+    this.gisLayerService.clearAll();
+    this._toast('Red eléctrica limpiada. Lista para cargar otra zona.');
+  }
+
   _togglePanel(force) {
     const willOpen = force !== undefined ? force : !this.panel.classList.contains('open');
     this.panel.classList.toggle('open', willOpen);
@@ -1070,11 +1178,41 @@ class LayerPanelController {
   }
 
   _render(summary) {
-    // La vista de tarjetas por capa se retiró a pedido: solo se
-    // mantiene el contador total en el badge del botón flotante.
     const total = this.gisLayerService.getTotalFeatureCount();
     this.badge.textContent = total;
     this.badge.classList.toggle('hidden', total === 0);
+
+    const list = document.getElementById('layer-chips-list');
+    list.innerHTML = '';
+
+    summary.forEach((cat) => {
+      const chip = document.createElement('div');
+      chip.className = 'layer-chip' + (cat.count === 0 ? ' empty' : '');
+
+      const dotClass = cat.geomKind === 'line' ? 'chip-dot line-dot' : 'chip-dot';
+      const dotShape = cat.geomKind === 'line'
+        ? ''
+        : cat.shape === 'square' ? 'transform:rotate(45deg);'
+        : cat.shape === 'triangle' ? 'border-radius:0 0 3px 0;'
+        : 'border-radius:50%;';
+
+      const filesHint = cat.fileNames.length
+        ? `${cat.fileNames.length} archivo${cat.fileNames.length > 1 ? 's' : ''}`
+        : 'sin datos';
+
+      chip.innerHTML = `
+        <span class="${dotClass}" style="background:${cat.color};${dotShape}"></span>
+        <span class="chip-label">${cat.label}<small>${filesHint}</small></span>
+        <span class="chip-count">${cat.count}</span>
+        <div class="layer-toggle ${cat.visible ? 'on' : ''}" data-cat="${cat.id}"><div class="knob"></div></div>
+      `;
+
+      chip.querySelector('.layer-toggle').addEventListener('click', () => {
+        this.gisLayerService.toggleCategory(cat.id);
+      });
+
+      list.appendChild(chip);
+    });
   }
 
   _toast(msg) {
