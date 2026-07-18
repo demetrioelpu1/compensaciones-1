@@ -1,0 +1,1238 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Catastro Eléctrico · Módulo 2 — Capas GIS de Red</title>
+<link rel="manifest" href="./manifest.webmanifest" />
+<meta name="theme-color" content="#181c22" />
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+
+<!-- Librerías de parseo de formatos GIS de entrada (Módulo 2) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://unpkg.com/[email protected]/togeojson.js"></script>
+<script src="https://unpkg.com/[email protected]/dist/shp.js"></script>
+
+<style>
+  :root{
+    --bar-bg:#181c22;
+    --bar-bg-2:#20252d;
+    --hivis:#F2B705;         /* amarillo alta visibilidad, PPE eléctrico */
+    --hivis-dim:#8a6c07;
+    --danger:#E4572E;        /* naranja seguridad / sobretensión */
+    --ok:#2E8B57;             /* verde estable / subtensión-normal */
+    --text:#EDEFF2;
+    --text-dim:#8B93A1;
+    --line:#2B3038;
+    --mono: 'JetBrains Mono', 'Roboto Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+
+  html,body{
+    margin:0; padding:0; height:100%; width:100%;
+    background:#0e1116; color:var(--text);
+    font-family:var(--sans);
+    overflow:hidden;
+  }
+
+  #app{
+    display:flex; flex-direction:column; height:100vh; width:100vw;
+  }
+
+  /* ---------- BARRA SUPERIOR ---------- */
+  header{
+    background:var(--bar-bg);
+    border-bottom:1px solid var(--line);
+    padding:10px 14px;
+    display:flex; align-items:center; justify-content:space-between;
+    z-index:1000;
+    flex-shrink:0;
+  }
+  .brand{ display:flex; align-items:center; gap:10px; }
+  .brand .tag{
+    width:10px; height:10px; border-radius:2px; background:var(--hivis);
+    box-shadow:0 0 8px var(--hivis);
+  }
+  .brand h1{
+    font-size:13px; font-weight:600; letter-spacing:.04em; margin:0; color:var(--text);
+    text-transform:uppercase;
+  }
+  .brand small{
+    display:block; font-size:10px; color:var(--text-dim); font-family:var(--mono); margin-top:1px;
+  }
+  #gps-status{
+    display:flex; align-items:center; gap:6px;
+    font-family:var(--mono); font-size:11px; color:var(--text-dim);
+    padding:5px 10px; border:1px solid var(--line); border-radius:20px;
+  }
+  #gps-status .dot{
+    width:7px; height:7px; border-radius:50%; background:var(--text-dim); transition:background .25s;
+  }
+  #gps-status.searching .dot{ background:var(--hivis); animation:pulse 1.1s infinite; }
+  #gps-status.locked .dot{ background:var(--ok); box-shadow:0 0 6px var(--ok); }
+  #gps-status.error .dot{ background:var(--danger); }
+  @keyframes pulse{ 0%,100%{opacity:1;} 50%{opacity:.25;} }
+
+  /* ---------- MAPA ---------- */
+  #map-wrap{ flex:1; position:relative; min-height:0; }
+  #map{ width:100%; height:100%; background:#0e1116; }
+
+  /* Marcador de usuario (punto GPS) */
+  .gps-marker{
+    width:18px; height:18px; border-radius:50%;
+    background:var(--hivis);
+    border:3px solid #1a1f26;
+    box-shadow:0 0 0 2px var(--hivis), 0 0 10px rgba(242,183,5,.7);
+  }
+  .gps-heading{
+    width:0; height:0;
+    border-left:6px solid transparent;
+    border-right:6px solid transparent;
+    border-bottom:14px solid var(--hivis);
+    position:absolute; top:-16px; left:3px;
+    filter:drop-shadow(0 0 3px rgba(242,183,5,.6));
+  }
+
+  /* Botón flotante "centrar/seguir" */
+  #btn-locate{
+    position:absolute; right:14px; bottom:96px;
+    width:48px; height:48px; border-radius:12px;
+    background:var(--bar-bg-2); border:1px solid var(--line);
+    color:var(--text); display:flex; align-items:center; justify-content:center;
+    cursor:pointer; z-index:900;
+    box-shadow:0 4px 14px rgba(0,0,0,.4);
+    transition:background .15s, border-color .15s;
+  }
+  #btn-locate:active{ background:#282e38; }
+  #btn-locate.following{
+    background:var(--hivis); border-color:var(--hivis);
+  }
+  #btn-locate.following svg{ stroke:#181c22; }
+  #btn-locate svg{ width:22px; height:22px; stroke:var(--text); fill:none; stroke-width:2; }
+
+  /* ---------- PANEL INFERIOR: TELEMETRÍA ---------- */
+  footer{
+    background:var(--bar-bg);
+    border-top:1px solid var(--line);
+    padding:10px 14px 14px;
+    z-index:1000;
+    flex-shrink:0;
+  }
+  .telemetry{
+    display:grid;
+    grid-template-columns:repeat(4, 1fr);
+    gap:0;
+  }
+  .telemetry .cell{
+    padding:0 12px;
+    border-right:1px solid var(--line);
+  }
+  .telemetry .cell:last-child{ border-right:none; }
+  .telemetry .cell .k{
+    font-size:9px; letter-spacing:.08em; color:var(--text-dim); text-transform:uppercase;
+    margin-bottom:3px;
+  }
+  .telemetry .cell .v{
+    font-family:var(--mono); font-size:14px; color:var(--text); font-weight:500;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .telemetry .cell .v.warn{ color:var(--hivis); }
+  .telemetry .cell .v.err{ color:var(--danger); }
+
+  #toast{
+    position:absolute; left:50%; top:14px; transform:translate(-50%,-140%);
+    background:var(--bar-bg-2); border:1px solid var(--line);
+    color:var(--text); font-size:12px; padding:9px 16px; border-radius:8px;
+    z-index:1200; transition:transform .3s ease; box-shadow:0 6px 20px rgba(0,0,0,.5);
+    max-width:86%; text-align:center;
+  }
+  #toast.show{ transform:translate(-50%,0); }
+
+  .leaflet-control-attribution{
+    background:rgba(24,28,34,.85) !important; color:var(--text-dim) !important;
+    font-size:9px !important;
+  }
+  .leaflet-control-attribution a{ color:var(--text-dim) !important; }
+  .leaflet-control-zoom{ display:none; } /* control táctil propio, evitamos duplicar UI */
+
+  /* ============================================================
+     MÓDULO 2 · PANEL DE CAPAS GIS DE RED
+     ============================================================ */
+
+  /* Botón flotante que abre/cierra el panel de capas */
+  #btn-layers{
+    position:absolute; right:14px; bottom:150px;
+    width:48px; height:48px; border-radius:12px;
+    background:var(--bar-bg-2); border:1px solid var(--line);
+    color:var(--text); display:flex; align-items:center; justify-content:center;
+    cursor:pointer; z-index:900;
+    box-shadow:0 4px 14px rgba(0,0,0,.4);
+    transition:background .15s, border-color .15s;
+  }
+  #btn-layers:active{ background:#282e38; }
+  #btn-layers.active{ background:var(--hivis); border-color:var(--hivis); }
+  #btn-layers.active svg{ stroke:#181c22; }
+  #btn-layers svg{ width:22px; height:22px; stroke:var(--text); fill:none; stroke-width:2; }
+  #btn-layers .badge{
+    position:absolute; top:-6px; right:-6px;
+    background:var(--ok); color:#fff; font-family:var(--mono);
+    font-size:10px; font-weight:700; min-width:18px; height:18px;
+    border-radius:9px; display:flex; align-items:center; justify-content:center;
+    padding:0 4px; border:2px solid #0e1116;
+  }
+  #btn-layers .badge.hidden{ display:none; }
+
+  /* Panel lateral deslizable */
+  #layers-panel{
+    position:absolute; top:0; right:0; bottom:0;
+    width:300px; max-width:86vw;
+    background:var(--bar-bg);
+    border-left:1px solid var(--line);
+    z-index:950;
+    transform:translateX(100%);
+    transition:transform .25s ease;
+    display:flex; flex-direction:column;
+    box-shadow:-8px 0 24px rgba(0,0,0,.35);
+  }
+  #layers-panel.open{ transform:translateX(0); }
+
+  .layers-panel-header{
+    padding:14px 16px 10px;
+    border-bottom:1px solid var(--line);
+    display:flex; align-items:center; justify-content:space-between;
+    flex-shrink:0;
+  }
+  .layers-panel-header h2{
+    font-size:12px; font-weight:600; letter-spacing:.05em; text-transform:uppercase;
+    margin:0; color:var(--text);
+  }
+  .layers-panel-header .close-btn{
+    width:28px; height:28px; border-radius:6px; border:1px solid var(--line);
+    background:transparent; color:var(--text-dim);
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
+
+  .layers-panel-body{
+    flex:1; overflow-y:auto; padding:10px 12px;
+  }
+
+  .layers-panel-bulk{
+    padding:12px 12px 4px; flex-shrink:0;
+  }
+  .bulk-upload-btn{
+    display:flex; align-items:center; gap:11px;
+    background:linear-gradient(135deg, rgba(242,183,5,.14), rgba(242,183,5,.05));
+    border:1.5px solid var(--hivis);
+    border-radius:11px; padding:12px 13px; cursor:pointer;
+  }
+  .bulk-upload-btn svg{
+    background:var(--hivis); border-radius:8px; padding:6px;
+    width:20px; height:20px; flex-shrink:0; box-sizing:content-box;
+  }
+  .bulk-upload-btn strong{
+    display:block; font-size:12.5px; color:var(--text); font-weight:700;
+  }
+  .bulk-upload-btn small{
+    display:block; font-size:10px; color:var(--text-dim); margin-top:2px; line-height:1.3;
+  }
+  .bulk-upload-btn input[type=file]{ display:none; }
+
+  .layer-card{
+    background:var(--bar-bg-2);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:12px;
+    margin-bottom:10px;
+  }
+  .layer-card-top{
+    display:flex; align-items:center; gap:9px;
+    margin-bottom:9px;
+  }
+  .layer-swatch{
+    width:14px; height:14px; border-radius:3px; flex-shrink:0;
+    box-shadow:0 0 0 1px rgba(255,255,255,.08);
+  }
+  .layer-swatch.line-swatch{ border-radius:2px; height:4px; align-self:center; }
+  .layer-card-name{
+    font-size:12.5px; font-weight:600; color:var(--text); flex:1;
+  }
+  .layer-count{
+    font-family:var(--mono); font-size:10px; color:var(--text-dim);
+    background:#181c22; border:1px solid var(--line); border-radius:10px;
+    padding:2px 7px;
+  }
+
+  /* Interruptor visibilidad */
+  .layer-toggle{
+    position:relative; width:36px; height:20px; flex-shrink:0;
+    border-radius:10px; background:#2b3038; cursor:pointer;
+    border:1px solid var(--line); transition:background .15s;
+  }
+  .layer-toggle.on{ background:var(--ok); }
+  .layer-toggle .knob{
+    position:absolute; top:1px; left:1px; width:16px; height:16px;
+    border-radius:50%; background:#EDEFF2; transition:left .15s;
+  }
+  .layer-toggle.on .knob{ left:17px; }
+
+  .layer-card-actions{
+    display:flex; gap:8px;
+  }
+  .layer-card-file{
+    display:flex; align-items:center; gap:8px; margin-top:9px;
+  }
+  .layer-card-filename{
+    flex:1; font-size:10.5px; color:var(--text-dim);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .layer-card-file .layer-btn{
+    flex:0 0 auto; padding:6px 9px;
+  }
+  .layer-btn{
+    flex:1; font-size:11px; font-family:var(--sans); font-weight:500;
+    padding:7px 8px; border-radius:7px; border:1px solid var(--line);
+    background:#181c22; color:var(--text); cursor:pointer;
+    display:flex; align-items:center; justify-content:center; gap:5px;
+  }
+  .layer-btn:active{ background:#232833; }
+  .layer-btn.danger{ color:var(--danger); border-color:rgba(228,87,46,.3); }
+  .layer-btn svg{ width:13px; height:13px; stroke:currentColor; fill:none; stroke-width:2; }
+  .layer-btn input[type=file]{ display:none; }
+
+  .layer-card-empty{
+    font-size:10.5px; color:var(--text-dim); font-style:italic;
+    margin-top:9px;
+  }
+
+  .layers-panel-footer{
+    padding:10px 16px 14px; border-top:1px solid var(--line); flex-shrink:0;
+  }
+  .layers-panel-footer p{
+    font-size:10px; color:var(--text-dim); line-height:1.5; margin:0;
+  }
+
+  /* Popup de atributos sobre entidades GIS */
+  .leaflet-popup-content-wrapper{
+    background:var(--bar-bg-2) !important; color:var(--text) !important;
+    border:1px solid var(--line); border-radius:8px !important;
+  }
+  .leaflet-popup-tip{ background:var(--bar-bg-2) !important; }
+  .gis-popup table{ border-collapse:collapse; font-size:11px; }
+  .gis-popup td{ padding:2px 6px 2px 0; vertical-align:top; }
+  .gis-popup td.k{ color:var(--text-dim); font-family:var(--mono); white-space:nowrap; }
+  .gis-popup .title{ font-weight:700; font-size:12px; margin-bottom:5px; }
+
+  /* ============================================================
+     BANNER · Archivo recibido desde WhatsApp (Web Share Target)
+     ============================================================ */
+  #share-banner{
+    display:none;
+    position:absolute; left:14px; right:14px; bottom:14px;
+    background:var(--bar-bg-2); border:1px solid var(--hivis);
+    border-radius:12px; padding:14px; z-index:1300;
+    box-shadow:0 8px 26px rgba(0,0,0,.5);
+  }
+  #share-banner.show{ display:block; }
+  .share-banner-head{
+    display:flex; align-items:center; gap:8px;
+    font-size:12.5px; color:var(--text); margin-bottom:6px;
+  }
+  #share-banner p{
+    font-size:11px; color:var(--text-dim); margin:0 0 10px;
+  }
+  .share-banner-options{
+    display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px;
+  }
+  .share-banner-options button{
+    flex:1 1 calc(50% - 8px);
+    font-size:11px; font-weight:600; color:var(--text);
+    background:#181c22; border:1px solid var(--line); border-radius:8px;
+    padding:9px 6px; cursor:pointer; display:flex; align-items:center; gap:6px; justify-content:center;
+  }
+  .share-banner-options button .dot{
+    width:9px; height:9px; border-radius:50%; flex-shrink:0;
+  }
+  #share-banner-dismiss{
+    width:100%; background:transparent; border:1px solid var(--line); border-radius:8px;
+    color:var(--text-dim); font-size:11px; padding:7px; cursor:pointer;
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <header>
+    <div class="brand">
+      <span class="tag"></span>
+      <div>
+        <h1>Catastro Técnico-Comercial</h1>
+        <small>Módulo 02 · Capas de red eléctrica</small>
+      </div>
+    </div>
+    <div id="gps-status" class="searching">
+      <span class="dot"></span>
+      <span id="gps-status-text">Buscando señal…</span>
+    </div>
+  </header>
+
+  <div id="map-wrap">
+    <div id="map"></div>
+    <div id="toast"></div>
+
+    <button id="btn-locate" title="Centrar y seguir mi ubicación">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+    </button>
+
+    <button id="btn-layers" title="Capas de la red eléctrica">
+      <svg viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+      <span class="badge hidden" id="layers-badge">0</span>
+    </button>
+
+    <aside id="layers-panel">
+      <div class="layers-panel-header">
+        <h2>Red eléctrica base</h2>
+        <button class="close-btn" id="btn-close-layers">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="layers-panel-bulk">
+        <label class="bulk-upload-btn">
+          <svg viewBox="0 0 24 24" width="20" height="20" stroke="#181c22" fill="none" stroke-width="2"><path d="M12 3v12M7 8l5-5 5 5M5 21h14"/></svg>
+          <span>
+            <strong>Cargar archivos de la red</strong>
+            <small>Selecciona todos los KMZ a la vez — se ordenan solos</small>
+          </span>
+          <input type="file" id="bulk-file-input" accept=".kmz,.kml,.zip,.geojson,.json" multiple />
+        </label>
+      </div>
+      <div class="layers-panel-body" id="layers-panel-body">
+        <!-- Las 5 tarjetas de capa (Postes BT, Postes MT, Subestaciones,
+             Tramos MT, Tramos BT) se generan dinámicamente por GISLayerService -->
+      </div>
+      <div class="layers-panel-footer">
+        <p>Toca "Cargar archivos de la red" y selecciona todos los KMZ/SHP a la vez desde WhatsApp o tus Descargas — la app los identifica solos por su nombre (BT, MT, SED, tramos). Si un nombre es ambiguo, te preguntará a qué capa pertenece.</p>
+      </div>
+    </aside>
+
+    <div id="share-banner">
+      <div class="share-banner-head">
+        <svg viewBox="0 0 24 24" width="16" height="16" stroke="#F2B705" fill="none" stroke-width="2"><path d="M12 3v12M7 8l5-5 5 5M5 21h14"/></svg>
+        <span>Archivo: <b id="share-filename">—</b></span>
+      </div>
+      <p>No identifiqué la capa automáticamente. ¿A cuál pertenece?</p>
+      <div class="share-banner-options" id="share-banner-options"></div>
+      <button id="share-banner-dismiss">Descartar</button>
+    </div>
+  </div>
+
+  <footer>
+    <div class="telemetry">
+      <div class="cell">
+        <div class="k">Latitud</div>
+        <div class="v" id="tl-lat">—</div>
+      </div>
+      <div class="cell">
+        <div class="k">Longitud</div>
+        <div class="v" id="tl-lng">—</div>
+      </div>
+      <div class="cell">
+        <div class="k">Precisión</div>
+        <div class="v" id="tl-acc">—</div>
+      </div>
+      <div class="cell">
+        <div class="k">Altitud</div>
+        <div class="v" id="tl-alt">—</div>
+      </div>
+    </div>
+  </footer>
+
+</div>
+
+<script>
+/* ============================================================
+   ARQUITECTURA MÓDULO 1
+   ------------------------------------------------------------
+   - MapService          → inicializa Leaflet + capa base OSM
+   - GeolocationService   → wrapper de watchPosition, expone
+                            eventos (onUpdate, onError) y estado
+   - UIController         → conecta ambos servicios con el DOM
+   - AppController        → orquesta el arranque
+
+   Este mismo patrón de "servicios" se reutiliza en los módulos
+   2-5 (LayerLoaderService, BarcodeScannerService, CameraService,
+   DrawService, GISExportService, XLSXExportService), por lo que
+   la migración a Ionic/Capacitor sólo implica reemplazar la
+   implementación interna de cada servicio, no su interfaz.
+   ============================================================ */
+
+// ---------------------------------------------------------------
+// MapService: responsable únicamente del mapa base y sus capas.
+// ---------------------------------------------------------------
+class MapService {
+  constructor(containerId) {
+    this.map = L.map(containerId, {
+      zoomControl: false,
+      attributionControl: true,
+      center: [-15.8402, -70.0219], // fallback: Puno, Perú
+      zoom: 13,
+    });
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors',
+    }).addTo(this.map);
+
+    // Grupo reservado para capas GIS externas (Módulo 2: postes,
+    // subestaciones, líneas cargadas desde KMZ/KML/GeoJSON).
+    this.networkLayerGroup = L.layerGroup().addTo(this.map);
+
+    // Grupo reservado para geometrías digitalizadas por el usuario
+    // (Módulo 4: línea de acometida, punto de medidor).
+    this.sketchLayerGroup = L.layerGroup().addTo(this.map);
+  }
+
+  panTo(lat, lng, zoom) {
+    this.map.setView([lat, lng], zoom ?? this.map.getZoom(), { animate: true });
+  }
+
+  getMap() {
+    return this.map;
+  }
+}
+
+// ---------------------------------------------------------------
+// GeolocationService: encapsula la Geolocation API del navegador.
+// En la migración a Capacitor, este servicio se reemplaza por
+// @capacitor/geolocation manteniendo la misma interfaz pública
+// (start / stop / onUpdate / onError).
+// ---------------------------------------------------------------
+class GeolocationService {
+  constructor() {
+    this.watchId = null;
+    this.lastPosition = null;
+    this._updateHandlers = [];
+    this._errorHandlers = [];
+  }
+
+  isSupported() {
+    return 'geolocation' in navigator;
+  }
+
+  onUpdate(handler) { this._updateHandlers.push(handler); }
+  onError(handler) { this._errorHandlers.push(handler); }
+
+  start() {
+    if (!this.isSupported()) {
+      this._errorHandlers.forEach(h => h({ code: -1, message: 'Geolocalización no soportada en este navegador.' }));
+      return;
+    }
+
+    const options = {
+      enableHighAccuracy: true, // fuerza uso de GPS de hardware, no sólo red/WiFi
+      maximumAge: 1000,
+      timeout: 15000,
+    };
+
+    this.watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        this.lastPosition = pos;
+        this._updateHandlers.forEach(h => h(pos));
+      },
+      (err) => {
+        this._errorHandlers.forEach(h => h(err));
+      },
+      options
+    );
+  }
+
+  stop() {
+    if (this.watchId !== null) {
+      navigator.geolocation.clearWatch(this.watchId);
+      this.watchId = null;
+    }
+  }
+}
+
+// ---------------------------------------------------------------
+// UIController: conecta los servicios con el DOM. No contiene
+// lógica de mapa ni de GPS, sólo presentación y estado de UI.
+// ---------------------------------------------------------------
+class UIController {
+  constructor(mapService, geoService) {
+    this.mapService = mapService;
+    this.geoService = geoService;
+
+    this.userMarker = null;
+    this.accuracyCircle = null;
+    this.following = true;   // el mapa sigue al usuario por defecto
+    this.firstFix = true;
+
+    this._bindDom();
+    this._bindGeoEvents();
+  }
+
+  _bindDom() {
+    this.statusEl = document.getElementById('gps-status');
+    this.statusTextEl = document.getElementById('gps-status-text');
+    this.btnLocate = document.getElementById('btn-locate');
+    this.toastEl = document.getElementById('toast');
+
+    this.elLat = document.getElementById('tl-lat');
+    this.elLng = document.getElementById('tl-lng');
+    this.elAcc = document.getElementById('tl-acc');
+    this.elAlt = document.getElementById('tl-alt');
+
+    this.btnLocate.classList.add('following');
+
+    this.btnLocate.addEventListener('click', () => {
+      this.following = true;
+      this.btnLocate.classList.add('following');
+      const pos = this.geoService.lastPosition;
+      if (pos) {
+        this.mapService.panTo(pos.coords.latitude, pos.coords.longitude, 18);
+      } else {
+        this._toast('Aún no hay una posición GPS disponible.');
+      }
+    });
+
+    // Si el usuario arrastra el mapa manualmente, dejamos de "seguir"
+    this.mapService.getMap().on('dragstart', () => {
+      this.following = false;
+      this.btnLocate.classList.remove('following');
+    });
+  }
+
+  _bindGeoEvents() {
+    this.geoService.onUpdate((pos) => this._handleUpdate(pos));
+    this.geoService.onError((err) => this._handleError(err));
+  }
+
+  _handleUpdate(pos) {
+    const { latitude, longitude, accuracy, altitude, heading } = pos.coords;
+
+    this._setStatus('locked', 'GPS activo');
+
+    this.elLat.textContent = latitude.toFixed(6) + '°';
+    this.elLng.textContent = longitude.toFixed(6) + '°';
+
+    this.elAcc.textContent = accuracy ? `± ${accuracy.toFixed(1)} m` : '—';
+    this.elAcc.classList.toggle('warn', accuracy > 15);
+    this.elAcc.classList.toggle('err', accuracy > 30);
+
+    this.elAlt.textContent = (altitude !== null && altitude !== undefined)
+      ? `${altitude.toFixed(1)} m`
+      : 'N/D';
+
+    this._renderMarker(latitude, longitude, accuracy, heading);
+
+    if (this.firstFix) {
+      this.mapService.panTo(latitude, longitude, 18);
+      this.firstFix = false;
+    } else if (this.following) {
+      this.mapService.panTo(latitude, longitude);
+    }
+  }
+
+  _renderMarker(lat, lng, accuracy, heading) {
+    const map = this.mapService.getMap();
+    const latlng = [lat, lng];
+
+    const icon = L.divIcon({
+      className: '',
+      html: `<div class="gps-marker"></div>${
+        (heading !== null && heading !== undefined && !isNaN(heading))
+          ? `<div class="gps-heading" style="transform:rotate(${heading}deg)"></div>`
+          : ''
+      }`,
+      iconSize: [18, 18],
+      iconAnchor: [9, 9],
+    });
+
+    if (!this.userMarker) {
+      this.userMarker = L.marker(latlng, { icon, zIndexOffset: 1000 }).addTo(map);
+    } else {
+      this.userMarker.setLatLng(latlng);
+      this.userMarker.setIcon(icon);
+    }
+
+    if (accuracy) {
+      if (!this.accuracyCircle) {
+        this.accuracyCircle = L.circle(latlng, {
+          radius: accuracy,
+          color: '#F2B705',
+          weight: 1,
+          fillColor: '#F2B705',
+          fillOpacity: 0.08,
+        }).addTo(map);
+      } else {
+        this.accuracyCircle.setLatLng(latlng);
+        this.accuracyCircle.setRadius(accuracy);
+      }
+    }
+  }
+
+  _handleError(err) {
+    this._setStatus('error', this._errorMessage(err));
+    this._toast(this._errorMessage(err));
+  }
+
+  _errorMessage(err) {
+    switch (err.code) {
+      case 1: return 'Permiso de ubicación denegado';
+      case 2: return 'Ubicación no disponible';
+      case 3: return 'Tiempo de espera agotado';
+      default: return err.message || 'Error de geolocalización';
+    }
+  }
+
+  _setStatus(state, text) {
+    this.statusEl.className = state;
+    this.statusTextEl.textContent = text;
+  }
+
+  _toast(msg) {
+    this.toastEl.textContent = msg;
+    this.toastEl.classList.add('show');
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => this.toastEl.classList.remove('show'), 3200);
+  }
+}
+
+// ---------------------------------------------------------------
+// classifyGisFilename: intenta deducir a qué capa de red pertenece
+// un archivo únicamente por su nombre, siguiendo la convención de
+// exportación típica de ArcMap (ej: "KMZ POSTES BT.kmz",
+// "KMZ TRAMOS MT.kmz", "KMZ SED.kmz"). Si no logra identificarlo
+// con certeza, devuelve null y se le pregunta al técnico.
+// ---------------------------------------------------------------
+function classifyGisFilename(filename) {
+  const n = filename
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, ''); // quita tildes
+
+  const hasBT = /\bbt\b|baja/.test(n);
+  const hasMT = /\bmt\b|media/.test(n);
+  const isSubestacion = /\bsed\b|subesta/.test(n);
+  const isPoste = /poste/.test(n);
+  const isTramo = /tramo|\bred\b|linea/.test(n);
+
+  if (isSubestacion) return 'subestaciones';
+  if (isPoste && hasBT) return 'postesBT';
+  if (isPoste && hasMT) return 'postesMT';
+  if (isTramo && hasBT) return 'tramosBT';
+  if (isTramo && hasMT) return 'tramosMT';
+
+  return null; // ambiguo
+}
+
+// ---------------------------------------------------------------
+// CategoryAssignmentBanner: banner reutilizable que le pregunta al
+// técnico a qué capa pertenece un archivo cuando no se pudo
+// deducir automáticamente por el nombre. Lo usan tanto la carga
+// masiva como la recepción de archivos compartidos desde WhatsApp.
+// ---------------------------------------------------------------
+class CategoryAssignmentBanner {
+  constructor() {
+    this.banner = document.getElementById('share-banner');
+    this.filenameEl = document.getElementById('share-filename');
+    this.optionsEl = document.getElementById('share-banner-options');
+    this._resolveFn = null;
+
+    document.getElementById('share-banner-dismiss').addEventListener('click', () => this._resolve(null));
+  }
+
+  /** Devuelve una Promise<string|null> con el id de categoría elegido, o null si se descarta. */
+  prompt(filename) {
+    return new Promise((resolve) => {
+      this._resolveFn = resolve;
+      this.filenameEl.textContent = filename;
+      this.optionsEl.innerHTML = '';
+
+      GISLayerService.CATEGORIES.forEach((cat) => {
+        const btn = document.createElement('button');
+        btn.innerHTML = `<span class="dot" style="background:${cat.color}"></span>${cat.label}`;
+        btn.addEventListener('click', () => this._resolve(cat.id));
+        this.optionsEl.appendChild(btn);
+      });
+
+      this.banner.classList.add('show');
+    });
+  }
+
+  _resolve(value) {
+    this.banner.classList.remove('show');
+    if (this._resolveFn) {
+      this._resolveFn(value);
+      this._resolveFn = null;
+    }
+  }
+}
+
+// ---------------------------------------------------------------
+// LayerLoaderService: convierte archivos externos (KMZ/KML/
+// Shapefile-ZIP/GeoJSON) en GeoJSON estándar. No sabe nada de
+// Leaflet ni de categorías de red — solo parsea.
+// ---------------------------------------------------------------
+class LayerLoaderService {
+  async parseFile(file) {
+    const ext = file.name.split('.').pop().toLowerCase();
+
+    switch (ext) {
+      case 'kmz':
+        this._assertLibLoaded('JSZip', typeof JSZip !== 'undefined');
+        this._assertLibLoaded('toGeoJSON', typeof toGeoJSON !== 'undefined');
+        return this._parseKMZ(file);
+      case 'kml':
+        this._assertLibLoaded('toGeoJSON', typeof toGeoJSON !== 'undefined');
+        return this._parseKML(file);
+      case 'zip':
+        this._assertLibLoaded('shp', typeof shp !== 'undefined');
+        return this._parseShapefileZip(file);
+      case 'geojson':
+      case 'json':
+        return this._parseGeoJSON(file);
+      default:
+        throw new Error(`Formato ".${ext}" no soportado. Usa KMZ, KML, SHP (.zip) o GeoJSON.`);
+    }
+  }
+
+  _assertLibLoaded(libName, isLoaded) {
+    if (!isLoaded) {
+      throw new Error(
+        `No se pudo cargar la librería "${libName}" (sin conexión a internet o abriste el archivo directamente en vez de usar la URL de GitHub Pages).`
+      );
+    }
+  }
+
+  async _parseKML(file) {
+    const text = await file.text();
+    const xml = new DOMParser().parseFromString(text, 'text/xml');
+    const geojson = toGeoJSON.kml(xml);
+    this._assertHasFeatures(geojson, 'KML');
+    return geojson;
+  }
+
+  async _parseKMZ(file) {
+    const buffer = await file.arrayBuffer();
+    const zip = await JSZip.loadAsync(buffer);
+    const kmlEntryName = Object.keys(zip.files).find(name => name.toLowerCase().endsWith('.kml'));
+
+    if (!kmlEntryName) {
+      throw new Error('El archivo KMZ no contiene ningún .kml en su interior.');
+    }
+
+    const kmlText = await zip.files[kmlEntryName].async('text');
+    const xml = new DOMParser().parseFromString(kmlText, 'text/xml');
+    const geojson = toGeoJSON.kml(xml);
+    this._assertHasFeatures(geojson, 'KMZ');
+    return geojson;
+  }
+
+  async _parseShapefileZip(file) {
+    const buffer = await file.arrayBuffer();
+    const result = await shp(buffer); // librería shpjs (global `shp`)
+
+    // shpjs devuelve un FeatureCollection único, o un arreglo de
+    // FeatureCollections si el .zip contiene varias capas .shp.
+    const geojson = Array.isArray(result)
+      ? { type: 'FeatureCollection', features: result.flatMap(fc => fc.features || []) }
+      : result;
+
+    this._assertHasFeatures(geojson, 'Shapefile');
+    return geojson;
+  }
+
+  async _parseGeoJSON(file) {
+    const text = await file.text();
+    const geojson = JSON.parse(text);
+    this._assertHasFeatures(geojson, 'GeoJSON');
+    return geojson;
+  }
+
+  _assertHasFeatures(geojson, label) {
+    if (!geojson || !Array.isArray(geojson.features) || geojson.features.length === 0) {
+      throw new Error(`El archivo ${label} no contiene entidades geométricas válidas.`);
+    }
+  }
+}
+
+// ---------------------------------------------------------------
+// GISLayerService: conoce las 4 categorías de red eléctrica del
+// catastro y administra sus LayerGroups de Leaflet (una capa
+// Leaflet independiente por categoría → visibilidad individual).
+// ---------------------------------------------------------------
+class GISLayerService {
+  static CATEGORIES = [
+    { id: 'postesBT',      label: 'Postes de Baja Tensión',  geomKind: 'point', color: '#4FA3E3', shape: 'circle' },
+    { id: 'postesMT',      label: 'Postes de Media Tensión', geomKind: 'point', color: '#E4572E', shape: 'triangle' },
+    { id: 'subestaciones', label: 'Subestaciones',           geomKind: 'point', color: '#F2B705', shape: 'square' },
+    { id: 'tramosMT',      label: 'Tramos de Red MT',        geomKind: 'line',  color: '#E4572E', shape: 'line' },
+    { id: 'tramosBT',      label: 'Tramos de Red BT',        geomKind: 'line',  color: '#4FA3E3', shape: 'line' },
+  ];
+
+  constructor(map, loaderService) {
+    this.map = map;
+    this.loaderService = loaderService;
+
+    // Estado por categoría: { group, visible, count, fileName }
+    this.state = {};
+    GISLayerService.CATEGORIES.forEach(cat => {
+      this.state[cat.id] = {
+        group: L.layerGroup(), // se agrega/quita del mapa según visibilidad
+        visible: true,
+        count: 0,
+        fileName: null,
+      };
+    });
+
+    this._changeHandlers = [];
+  }
+
+  onChange(handler) { this._changeHandlers.push(handler); }
+  _notify() { this._changeHandlers.forEach(h => h(this.getSummary())); }
+
+  getSummary() {
+    return GISLayerService.CATEGORIES.map(cat => ({
+      ...cat,
+      count: this.state[cat.id].count,
+      visible: this.state[cat.id].visible,
+      fileName: this.state[cat.id].fileName,
+    }));
+  }
+
+  async loadFileIntoCategory(categoryId, file) {
+    const geojson = await this.loaderService.parseFile(file);
+    const cat = GISLayerService.CATEGORIES.find(c => c.id === categoryId);
+    const st = this.state[categoryId];
+
+    st.group.clearLayers();
+
+    const leafletLayer = L.geoJSON(geojson, {
+      pointToLayer: (feature, latlng) => this._buildPointMarker(latlng, cat),
+      style: () => this._buildLineStyle(cat),
+      onEachFeature: (feature, layer) => this._bindPopup(feature, layer, cat),
+    });
+
+    let featureCount = 0;
+    leafletLayer.eachLayer(() => featureCount++);
+
+    leafletLayer.eachLayer(l => st.group.addLayer(l));
+
+    st.count = featureCount;
+    st.fileName = file.name;
+
+    if (st.visible) st.group.addTo(this.map);
+
+    // Encuadrar el mapa a la capa recién cargada
+    const bounds = leafletLayer.getBounds();
+    if (bounds.isValid()) {
+      this.map.fitBounds(bounds, { padding: [40, 40], maxZoom: 18 });
+    }
+
+    this._notify();
+    return featureCount;
+  }
+
+  clearCategory(categoryId) {
+    const st = this.state[categoryId];
+    st.group.clearLayers();
+    st.count = 0;
+    st.fileName = null;
+    this._notify();
+  }
+
+  toggleCategory(categoryId) {
+    const st = this.state[categoryId];
+    st.visible = !st.visible;
+    if (st.visible) {
+      st.group.addTo(this.map);
+    } else {
+      this.map.removeLayer(st.group);
+    }
+    this._notify();
+  }
+
+  getTotalFeatureCount() {
+    return Object.values(this.state).reduce((sum, s) => sum + s.count, 0);
+  }
+
+  _buildPointMarker(latlng, cat) {
+    const shapeHtml = {
+      circle:   `<div style="width:12px;height:12px;border-radius:50%;background:${cat.color};border:2px solid #0e1116;"></div>`,
+      triangle: `<div style="width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:12px solid ${cat.color};filter:drop-shadow(0 0 1px #0e1116);"></div>`,
+      square:   `<div style="width:12px;height:12px;background:${cat.color};border:2px solid #0e1116;transform:rotate(45deg);"></div>`,
+    }[cat.shape];
+
+    const icon = L.divIcon({
+      className: '',
+      html: shapeHtml,
+      iconSize: [14, 14],
+      iconAnchor: [7, 7],
+    });
+
+    return L.marker(latlng, { icon });
+  }
+
+  _buildLineStyle(cat) {
+    return { color: cat.color, weight: 3, opacity: 0.9 };
+  }
+
+  _bindPopup(feature, layer, cat) {
+    const props = feature.properties || {};
+    const rows = Object.entries(props)
+      .filter(([, v]) => v !== null && v !== undefined && v !== '')
+      .slice(0, 12) // evita popups gigantes en entidades con muchos campos
+      .map(([k, v]) => `<tr><td class="k">${this._escape(k)}</td><td>${this._escape(String(v))}</td></tr>`)
+      .join('');
+
+    layer.bindPopup(
+      `<div class="gis-popup"><div class="title">${cat.label}</div><table>${
+        rows || '<tr><td class="k">sin atributos</td></tr>'
+      }</table></div>`
+    );
+  }
+
+  _escape(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+}
+
+// ---------------------------------------------------------------
+// LayerPanelController: dibuja y sincroniza el panel lateral de
+// capas con el estado de GISLayerService. Sólo DOM, sin lógica GIS.
+// ---------------------------------------------------------------
+class LayerPanelController {
+  constructor(gisLayerService, assignmentBanner) {
+    this.gisLayerService = gisLayerService;
+    this.assignmentBanner = assignmentBanner;
+
+    this.panel = document.getElementById('layers-panel');
+    this.body = document.getElementById('layers-panel-body');
+    this.btnToggle = document.getElementById('btn-layers');
+    this.btnClose = document.getElementById('btn-close-layers');
+    this.badge = document.getElementById('layers-badge');
+    this.toastEl = document.getElementById('toast');
+    this.bulkInput = document.getElementById('bulk-file-input');
+
+    this.btnToggle.addEventListener('click', () => this._togglePanel());
+    this.btnClose.addEventListener('click', () => this._togglePanel(false));
+    this.bulkInput.addEventListener('change', (e) => this._handleBulkUpload(e));
+
+    this.gisLayerService.onChange((summary) => this._render(summary));
+    this._render(this.gisLayerService.getSummary());
+  }
+
+  async _handleBulkUpload(e) {
+    const files = Array.from(e.target.files || []);
+    e.target.value = ''; // permite volver a elegir los mismos archivos después
+    if (!files.length) return;
+
+    const loaded = [];
+    const failed = [];
+
+    for (const file of files) {
+      let categoryId = classifyGisFilename(file.name);
+
+      if (!categoryId) {
+        this._togglePanel(true); // asegura que el panel esté visible para ver el banner
+        categoryId = await this.assignmentBanner.prompt(file.name);
+      }
+
+      if (!categoryId) continue; // el técnico descartó ese archivo
+
+      try {
+        const count = await this.gisLayerService.loadFileIntoCategory(categoryId, file);
+        const cat = GISLayerService.CATEGORIES.find((c) => c.id === categoryId);
+        loaded.push(`${cat.label} (${count})`);
+      } catch (err) {
+        failed.push(file.name);
+      }
+    }
+
+    let msg = loaded.length ? `Cargado: ${loaded.join(' · ')}` : '';
+    if (failed.length) msg += (msg ? ' — ' : '') + `Error en: ${failed.join(', ')}`;
+    if (msg) this._toast(msg);
+  }
+
+  _togglePanel(force) {
+    const willOpen = force !== undefined ? force : !this.panel.classList.contains('open');
+    this.panel.classList.toggle('open', willOpen);
+    this.btnToggle.classList.toggle('active', willOpen);
+  }
+
+  _render(summary) {
+    this.body.innerHTML = '';
+
+    summary.forEach(cat => {
+      const card = document.createElement('div');
+      card.className = 'layer-card';
+
+      const swatchClass = cat.geomKind === 'line' ? 'layer-swatch line-swatch' : 'layer-swatch';
+      const swatchShape = cat.geomKind === 'line' ? '' : (cat.shape === 'square' ? 'transform:rotate(45deg);' : (cat.shape === 'triangle' ? 'border-radius:0 0 3px 0;' : 'border-radius:50%;'));
+
+      card.innerHTML = `
+        <div class="layer-card-top">
+          <div class="${swatchClass}" style="background:${cat.color};${swatchShape}"></div>
+          <div class="layer-card-name">${cat.label}</div>
+          <div class="layer-count">${cat.count}</div>
+          <div class="layer-toggle ${cat.visible ? 'on' : ''}" data-action="toggle"><div class="knob"></div></div>
+        </div>
+        ${cat.fileName
+          ? `<div class="layer-card-file">
+               <span class="layer-card-filename">${this._truncate(cat.fileName)}</span>
+               <button class="layer-btn danger" data-action="clear" title="Quitar capa">
+                 <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>
+               </button>
+             </div>`
+          : `<div class="layer-card-empty">Sin datos cargados</div>`
+        }
+      `;
+
+      card.querySelector('[data-action="toggle"]').addEventListener('click', () => {
+        this.gisLayerService.toggleCategory(cat.id);
+      });
+
+      const clearBtn = card.querySelector('[data-action="clear"]');
+      if (clearBtn) {
+        clearBtn.addEventListener('click', () => this.gisLayerService.clearCategory(cat.id));
+      }
+
+      this.body.appendChild(card);
+    });
+
+    const total = this.gisLayerService.getTotalFeatureCount();
+    this.badge.textContent = total;
+    this.badge.classList.toggle('hidden', total === 0);
+  }
+
+  _truncate(name) {
+    return name.length > 30 ? name.slice(0, 27) + '…' : name;
+  }
+
+  _toast(msg) {
+    this.toastEl.textContent = msg;
+    this.toastEl.classList.add('show');
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => this.toastEl.classList.remove('show'), 3200);
+  }
+}
+
+// ---------------------------------------------------------------
+// PendingShareController: puente entre el Service Worker (que
+// guardó el archivo compartido desde WhatsApp en el Cache API) y
+// GISLayerService. Muestra el banner para que el técnico elija
+// a qué capa asignar el archivo recibido.
+// ---------------------------------------------------------------
+class PendingShareController {
+  constructor(gisLayerService, assignmentBanner) {
+    this.gisLayerService = gisLayerService;
+    this.assignmentBanner = assignmentBanner;
+    this.toastEl = document.getElementById('toast');
+  }
+
+  async checkForSharedFile() {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has('shared') && !params.has('sharedError')) return;
+
+    // Limpia el parámetro de la URL para que un refresh no reabra el flujo
+    window.history.replaceState({}, '', window.location.pathname);
+
+    if (params.has('sharedError')) {
+      this._toast('No se pudo procesar el archivo compartido. Intenta de nuevo.');
+      return;
+    }
+
+    if (!('caches' in window)) {
+      this._toast('Este navegador no soporta recepción de archivos compartidos.');
+      return;
+    }
+
+    try {
+      const cache = await caches.open('catastro-share-cache-v1');
+      const manifestRes = await cache.match('/__shared-manifest');
+      if (!manifestRes) return;
+
+      const manifest = await manifestRes.json();
+      if (!manifest.length) return;
+
+      // Prototipo: procesamos el primer archivo recibido. Si llegan
+      // varios a la vez, se podría encolar y repetir el flujo.
+      const entry = manifest[0];
+      const fileRes = await cache.match(entry.key);
+      const blob = await fileRes.blob();
+      const file = new File([blob], entry.name, { type: entry.type });
+
+      // Limpieza inmediata: ya leímos el archivo, no lo dejamos en cache
+      await Promise.all((await cache.keys()).map((req) => cache.delete(req)));
+
+      let categoryId = classifyGisFilename(file.name);
+      if (!categoryId) {
+        categoryId = await this.assignmentBanner.prompt(file.name);
+      }
+      if (!categoryId) return;
+
+      const count = await this.gisLayerService.loadFileIntoCategory(categoryId, file);
+      const cat = GISLayerService.CATEGORIES.find((c) => c.id === categoryId);
+      this._toast(`${cat.label}: ${count} entidades cargadas`);
+    } catch (err) {
+      this._toast(err.message || 'No se pudo leer el archivo recibido.');
+    }
+  }
+
+  _toast(msg) {
+    this.toastEl.textContent = msg;
+    this.toastEl.classList.add('show');
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => this.toastEl.classList.remove('show'), 3200);
+  }
+}
+
+// ---------------------------------------------------------------
+// AppController: punto único de arranque.
+// ---------------------------------------------------------------
+class AppController {
+  constructor() {
+    this.mapService = new MapService('map');
+    this.geoService = new GeolocationService();
+    this.uiController = new UIController(this.mapService, this.geoService);
+
+    // Módulo 2
+    this.layerLoaderService = new LayerLoaderService();
+    this.gisLayerService = new GISLayerService(this.mapService.getMap(), this.layerLoaderService);
+    this.assignmentBanner = new CategoryAssignmentBanner();
+    this.layerPanelController = new LayerPanelController(this.gisLayerService, this.assignmentBanner);
+    this.pendingShareController = new PendingShareController(this.gisLayerService, this.assignmentBanner);
+  }
+
+  async start() {
+    this.geoService.start();
+    this._registerServiceWorker();
+    await this.pendingShareController.checkForSharedFile();
+  }
+
+  _registerServiceWorker() {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js').catch(() => {
+        // Silencioso: si falla el registro (p. ej. abierto como file://),
+        // la app sigue funcionando sin la función de "Compartir con...".
+      });
+    }
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const app = new AppController();
+  app.start();
+  window.__app = app; // expuesto para depuración / módulos futuros
+});
+</script>
+</body>
+</html>
