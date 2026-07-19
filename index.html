@@ -196,6 +196,26 @@
   }
   #btn-layers .badge.hidden{ display:none; }
 
+  /* Botón flotante: alternar mapa de calles / satelital */
+  #btn-basemap{
+    position:absolute; right:14px; bottom:204px;
+    width:48px; height:48px; border-radius:12px;
+    background:var(--bar-bg-2); border:1px solid var(--line);
+    color:var(--text); display:flex; align-items:center; justify-content:center;
+    cursor:pointer; z-index:900;
+    box-shadow:0 4px 14px rgba(0,0,0,.4);
+    transition:background .15s, border-color .15s;
+  }
+  #btn-basemap:active{ background:#282e38; }
+  #btn-basemap svg{ width:22px; height:22px; stroke:var(--text); fill:none; stroke-width:2; }
+  #btn-basemap .basemap-label{
+    position:absolute; bottom:-7px; left:50%; transform:translateX(-50%);
+    background:var(--hivis); color:#181c22; font-family:var(--mono);
+    font-size:8px; font-weight:700; letter-spacing:.02em;
+    padding:1px 5px; border-radius:6px; white-space:nowrap;
+    border:2px solid #0e1116;
+  }
+
   /* Panel lateral deslizable */
   #layers-panel{
     position:absolute; top:0; right:0; bottom:0;
@@ -262,23 +282,6 @@
   .layers-panel-bulk{
     padding:12px 12px 4px; flex-shrink:0;
   }
-  .bulk-upload-btn{
-    display:flex; align-items:center; gap:11px;
-    background:linear-gradient(135deg, rgba(242,183,5,.14), rgba(242,183,5,.05));
-    border:1.5px solid var(--hivis);
-    border-radius:11px; padding:12px 13px; cursor:pointer;
-  }
-  .bulk-upload-btn svg{
-    background:var(--hivis); border-radius:8px; padding:6px;
-    width:20px; height:20px; flex-shrink:0; box-sizing:content-box;
-  }
-  .bulk-upload-btn strong{
-    display:block; font-size:12.5px; color:var(--text); font-weight:700;
-  }
-  .bulk-upload-btn small{
-    display:block; font-size:10px; color:var(--text-dim); margin-top:2px; line-height:1.3;
-  }
-  .bulk-upload-btn input[type=file]{ display:none; }
 
   .bulk-clear-btn{
     width:100%; margin-top:8px;
@@ -443,6 +446,11 @@
       <span class="badge hidden" id="layers-badge">0</span>
     </button>
 
+    <button id="btn-basemap" title="Cambiar mapa base">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 010 20 15 15 0 010-20z"/></svg>
+      <span class="basemap-label" id="basemap-label">SAT</span>
+    </button>
+
     <aside id="layers-panel">
       <div class="layers-panel-header">
         <h2>Red eléctrica base</h2>
@@ -451,15 +459,6 @@
         </button>
       </div>
       <div class="layers-panel-bulk">
-        <label class="bulk-upload-btn">
-          <svg viewBox="0 0 24 24" width="20" height="20" stroke="#181c22" fill="none" stroke-width="2"><path d="M12 3v12M7 8l5-5 5 5M5 21h14"/></svg>
-          <span>
-            <strong>Cargar archivos de la red</strong>
-            <small>Selecciona todos los KMZ a la vez — se ordenan solos</small>
-          </span>
-          <input type="file" id="bulk-file-input" accept=".kmz,.kml,.zip,.geojson,.json" multiple />
-        </label>
-
         <button class="bulk-clear-btn" id="btn-clear-network">
           <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>
           <span>Limpiar red cargada</span>
@@ -470,7 +469,7 @@
         <div id="layer-chips-list"></div>
       </div>
       <div class="layers-panel-footer">
-        <p>Cada carga se SUMA a lo que ya tienes y queda guardada en este celular, aunque compartas varios archivos por separado desde WhatsApp o cierres la app. Usa "Limpiar red cargada" solo cuando quieras empezar de cero.</p>
+        <p>Comparte cada KMZ desde WhatsApp hacia esta app (botón Compartir → CMP). Cada archivo se SUMA a lo que ya tienes y queda guardado en este celular. Usa "Limpiar red cargada" solo cuando quieras empezar de cero.</p>
       </div>
     </aside>
 
@@ -537,10 +536,21 @@ class MapService {
       zoom: 13,
     });
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap contributors',
-    }).addTo(this.map);
+    // Dos mapas base intercambiables: calles (OpenStreetMap) y
+    // satelital (Esri World Imagery, gratuito y sin necesidad de
+    // clave de API). Solo uno está agregado al mapa a la vez.
+    this.baseLayers = {
+      streets: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors',
+      }),
+      satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19,
+        attribution: 'Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics',
+      }),
+    };
+    this.currentBase = 'streets';
+    this.baseLayers.streets.addTo(this.map);
 
     // Grupo reservado para capas GIS externas (Módulo 2: postes,
     // subestaciones, líneas cargadas desde KMZ/KML/GeoJSON).
@@ -549,6 +559,21 @@ class MapService {
     // Grupo reservado para geometrías digitalizadas por el usuario
     // (Módulo 4: línea de acometida, punto de medidor).
     this.sketchLayerGroup = L.layerGroup().addTo(this.map);
+  }
+
+  setBaseLayer(key) {
+    if (key === this.currentBase || !this.baseLayers[key]) return;
+    this.map.removeLayer(this.baseLayers[this.currentBase]);
+    this.baseLayers[key].addTo(this.map);
+    // El mapa base va siempre debajo de todo lo demás
+    this.baseLayers[key].bringToBack();
+    this.currentBase = key;
+  }
+
+  toggleBaseLayer() {
+    const next = this.currentBase === 'streets' ? 'satellite' : 'streets';
+    this.setBaseLayer(next);
+    return next;
   }
 
   panTo(lat, lng, zoom) {
@@ -1110,9 +1135,9 @@ class LayerLoaderService {
 // ---------------------------------------------------------------
 class GISLayerService {
   static CATEGORIES = [
-    { id: 'postesBT',      label: 'Postes de Baja Tensión',  geomKind: 'point', color: '#4FA3E3', shape: 'circle', markerSize: 7,  useOriginalIcon: false },
-    { id: 'postesMT',      label: 'Postes de Media Tensión', geomKind: 'point', color: '#E4572E', shape: 'circle', markerSize: 7,  useOriginalIcon: false },
-    { id: 'subestaciones', label: 'Subestaciones',           geomKind: 'point', color: '#F2B705', shape: 'square', markerSize: 28, useOriginalIcon: true  },
+    { id: 'postesBT',      label: 'Postes de Baja Tensión',  geomKind: 'point', color: '#4FA3E3', shape: 'circle', markerSize: 14, useOriginalIcon: false },
+    { id: 'postesMT',      label: 'Postes de Media Tensión', geomKind: 'point', color: '#E4572E', shape: 'circle', markerSize: 14, useOriginalIcon: false },
+    { id: 'subestaciones', label: 'Subestaciones',           geomKind: 'point', color: '#F2B705', shape: 'square', markerSize: 84, useOriginalIcon: true  },
     { id: 'tramosMT',      label: 'Tramos de Red MT',        geomKind: 'line',  color: '#E4572E', shape: 'line' },
     { id: 'tramosBT',      label: 'Tramos de Red BT',        geomKind: 'line',  color: '#4FA3E3', shape: 'line' },
   ];
@@ -1303,6 +1328,13 @@ class GISLayerService {
 
   _buildPointMarker(latlng, cat, feature) {
     const size = cat.markerSize || 12;
+    // El área que RESPONDE al toque es más grande que el punto visual
+    // (mínimo 30px). Esto es clave en un celular: un punto de 14px es
+    // casi imposible de acertar con el dedo si el área táctil es
+    // igual de chica — separar ambas cosas es lo que hace que el
+    // popup realmente se abra al tocar.
+    const touchSize = Math.max(size, 30);
+
     const iconKey = feature?.properties?.__iconKey;
     const resolvedIconSrc = cat.useOriginalIcon && iconKey
       ? this.state[cat.id].iconCache[iconKey]
@@ -1312,7 +1344,8 @@ class GISLayerService {
     if (resolvedIconSrc) {
       // Se respeta el ícono TAL COMO fue guardado en el KMZ (el mismo
       // que se ve en ArcMap/Google Earth), al tamaño configurado para
-      // esta categoría.
+      // esta categoría. Ya es grande (Subestaciones), no necesita
+      // relleno táctil adicional.
       icon = L.icon({
         iconUrl: resolvedIconSrc,
         iconSize: [size, size],
@@ -1320,8 +1353,8 @@ class GISLayerService {
         popupAnchor: [0, -size / 2],
       });
     } else {
-      // Forma propia y consistente (postes = círculo, subestaciones
-      // sin ícono propio = rombo), al tamaño configurado.
+      // Forma propia y consistente (postes = círculo), envuelta en un
+      // contenedor invisible más grande que sí responde al toque.
       const shapeHtml = {
         circle:   `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${cat.color};border:2px solid #0e1116;"></div>`,
         triangle: `<div style="width:0;height:0;border-left:${size*0.6}px solid transparent;border-right:${size*0.6}px solid transparent;border-bottom:${size}px solid ${cat.color};filter:drop-shadow(0 0 1px #0e1116);"></div>`,
@@ -1330,9 +1363,9 @@ class GISLayerService {
 
       icon = L.divIcon({
         className: '',
-        html: shapeHtml,
-        iconSize: [size, size],
-        iconAnchor: [size / 2, size / 2],
+        html: `<div style="width:${touchSize}px;height:${touchSize}px;display:flex;align-items:center;justify-content:center;">${shapeHtml}</div>`,
+        iconSize: [touchSize, touchSize],
+        iconAnchor: [touchSize / 2, touchSize / 2],
       });
     }
 
@@ -1420,48 +1453,14 @@ class LayerPanelController {
     this.btnClose = document.getElementById('btn-close-layers');
     this.badge = document.getElementById('layers-badge');
     this.toastEl = document.getElementById('toast');
-    this.bulkInput = document.getElementById('bulk-file-input');
     this.btnClearNetwork = document.getElementById('btn-clear-network');
 
     this.btnToggle.addEventListener('click', () => this._togglePanel());
     this.btnClose.addEventListener('click', () => this._togglePanel(false));
-    this.bulkInput.addEventListener('change', (e) => this._handleBulkUpload(e));
     this.btnClearNetwork.addEventListener('click', () => this._handleClearAll());
 
     this.gisLayerService.onChange((summary) => this._render(summary));
     this._render(this.gisLayerService.getSummary());
-  }
-
-  async _handleBulkUpload(e) {
-    const files = Array.from(e.target.files || []);
-    e.target.value = ''; // permite volver a elegir los mismos archivos después
-    if (!files.length) return;
-
-    const loaded = [];
-    const failed = [];
-
-    for (const file of files) {
-      let categoryId = classifyGisFilename(file.name);
-
-      if (!categoryId) {
-        this._togglePanel(true); // asegura que el panel esté visible para ver el banner
-        categoryId = await this.assignmentBanner.prompt(file.name);
-      }
-
-      if (!categoryId) continue; // el técnico descartó ese archivo
-
-      try {
-        const count = await this.gisLayerService.loadFileIntoCategory(categoryId, file);
-        const cat = GISLayerService.CATEGORIES.find((c) => c.id === categoryId);
-        loaded.push(`${cat.label} (${count})`);
-      } catch (err) {
-        failed.push(file.name);
-      }
-    }
-
-    let msg = loaded.length ? `Cargado: ${loaded.join(' · ')}` : '';
-    if (failed.length) msg += (msg ? ' — ' : '') + `Error en: ${failed.join(', ')}`;
-    if (msg) this._toast(msg);
   }
 
   _handleClearAll() {
@@ -1606,11 +1605,32 @@ class PendingShareController {
 // ---------------------------------------------------------------
 // AppController: punto único de arranque.
 // ---------------------------------------------------------------
+// ---------------------------------------------------------------
+// BasemapToggleController: conecta el botón flotante con
+// MapService.toggleBaseLayer(), y actualiza la etiqueta para
+// mostrar hacia qué mapa se va a cambiar al tocarlo.
+// ---------------------------------------------------------------
+class BasemapToggleController {
+  constructor(mapService) {
+    this.mapService = mapService;
+    this.btn = document.getElementById('btn-basemap');
+    this.label = document.getElementById('basemap-label');
+
+    this.btn.addEventListener('click', () => {
+      const next = this.mapService.toggleBaseLayer();
+      // La etiqueta siempre indica el mapa AL QUE SE VA A CAMBIAR
+      // si se vuelve a tocar (patrón estándar de este tipo de botón).
+      this.label.textContent = next === 'satellite' ? 'MAPA' : 'SAT';
+    });
+  }
+}
+
 class AppController {
   constructor() {
     this.mapService = new MapService('map');
     this.geoService = new GeolocationService();
     this.uiController = new UIController(this.mapService, this.geoService);
+    this.basemapToggleController = new BasemapToggleController(this.mapService);
 
     // Módulo 2
     this.layerLoaderService = new LayerLoaderService();
