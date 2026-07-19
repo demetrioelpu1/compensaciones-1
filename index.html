@@ -1110,9 +1110,9 @@ class LayerLoaderService {
 // ---------------------------------------------------------------
 class GISLayerService {
   static CATEGORIES = [
-    { id: 'postesBT',      label: 'Postes de Baja Tensión',  geomKind: 'point', color: '#4FA3E3', shape: 'circle' },
-    { id: 'postesMT',      label: 'Postes de Media Tensión', geomKind: 'point', color: '#E4572E', shape: 'triangle' },
-    { id: 'subestaciones', label: 'Subestaciones',           geomKind: 'point', color: '#F2B705', shape: 'square' },
+    { id: 'postesBT',      label: 'Postes de Baja Tensión',  geomKind: 'point', color: '#4FA3E3', shape: 'circle', markerSize: 7,  useOriginalIcon: false },
+    { id: 'postesMT',      label: 'Postes de Media Tensión', geomKind: 'point', color: '#E4572E', shape: 'circle', markerSize: 7,  useOriginalIcon: false },
+    { id: 'subestaciones', label: 'Subestaciones',           geomKind: 'point', color: '#F2B705', shape: 'square', markerSize: 28, useOriginalIcon: true  },
     { id: 'tramosMT',      label: 'Tramos de Red MT',        geomKind: 'line',  color: '#E4572E', shape: 'line' },
     { id: 'tramosBT',      label: 'Tramos de Red BT',        geomKind: 'line',  color: '#4FA3E3', shape: 'line' },
   ];
@@ -1302,33 +1302,37 @@ class GISLayerService {
   }
 
   _buildPointMarker(latlng, cat, feature) {
+    const size = cat.markerSize || 12;
     const iconKey = feature?.properties?.__iconKey;
-    const resolvedIconSrc = iconKey ? this.state[cat.id].iconCache[iconKey] : null;
+    const resolvedIconSrc = cat.useOriginalIcon && iconKey
+      ? this.state[cat.id].iconCache[iconKey]
+      : null;
 
     let icon;
     if (resolvedIconSrc) {
       // Se respeta el ícono TAL COMO fue guardado en el KMZ (el mismo
-      // que se ve en ArcMap/Google Earth), en vez de una forma propia.
+      // que se ve en ArcMap/Google Earth), al tamaño configurado para
+      // esta categoría.
       icon = L.icon({
         iconUrl: resolvedIconSrc,
-        iconSize: [30, 30],
-        iconAnchor: [15, 15],
-        popupAnchor: [0, -14],
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
+        popupAnchor: [0, -size / 2],
       });
     } else {
-      // Sin ícono propio en el archivo (ej. Shapefile o KML sin estilo):
-      // se usa una forma genérica por categoría, como respaldo.
+      // Forma propia y consistente (postes = círculo, subestaciones
+      // sin ícono propio = rombo), al tamaño configurado.
       const shapeHtml = {
-        circle:   `<div style="width:12px;height:12px;border-radius:50%;background:${cat.color};border:2px solid #0e1116;"></div>`,
-        triangle: `<div style="width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:12px solid ${cat.color};filter:drop-shadow(0 0 1px #0e1116);"></div>`,
-        square:   `<div style="width:12px;height:12px;background:${cat.color};border:2px solid #0e1116;transform:rotate(45deg);"></div>`,
+        circle:   `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${cat.color};border:2px solid #0e1116;"></div>`,
+        triangle: `<div style="width:0;height:0;border-left:${size*0.6}px solid transparent;border-right:${size*0.6}px solid transparent;border-bottom:${size}px solid ${cat.color};filter:drop-shadow(0 0 1px #0e1116);"></div>`,
+        square:   `<div style="width:${size}px;height:${size}px;background:${cat.color};border:2px solid #0e1116;transform:rotate(45deg);"></div>`,
       }[cat.shape];
 
       icon = L.divIcon({
         className: '',
         html: shapeHtml,
-        iconSize: [14, 14],
-        iconAnchor: [7, 7],
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
       });
     }
 
@@ -1341,17 +1345,57 @@ class GISLayerService {
 
   _bindPopup(feature, layer, cat) {
     const props = feature.properties || {};
-    const rows = Object.entries(props)
-      .filter(([k, v]) => v !== null && v !== undefined && v !== '' && !k.startsWith('__'))
-      .slice(0, 12) // evita popups gigantes en entidades con muchos campos
-      .map(([k, v]) => `<tr><td class="k">${this._escape(k)}</td><td>${this._escape(String(v))}</td></tr>`)
-      .join('');
+
+    // ArcMap/ArcGIS Pro suele exportar TODOS los atributos como una
+    // tabla HTML dentro de <description>, en vez de campos sueltos.
+    // Se intenta leer esa tabla primero; si no existe, se cae al
+    // listado genérico de propiedades planas.
+    let rows = this._parseDescriptionTable(props.description);
+
+    if (!rows) {
+      rows = Object.entries(props)
+        .filter(([k, v]) => v !== null && v !== undefined && v !== '' && !k.startsWith('__') && k !== 'description')
+        .slice(0, 12) // evita popups gigantes en entidades con muchos campos
+        .map(([k, v]) => `<tr><td class="k">${this._escape(k)}</td><td>${this._escape(String(v))}</td></tr>`)
+        .join('');
+    }
 
     layer.bindPopup(
       `<div class="gis-popup"><div class="title">${cat.label}</div><table>${
         rows || '<tr><td class="k">sin atributos</td></tr>'
       }</table></div>`
     );
+  }
+
+  /**
+   * Extrae pares campo/valor desde una tabla HTML (patrón típico del
+   * "BalloonStyle" que ArcMap/ArcGIS Pro incluye en <description> al
+   * exportar a KML/KMZ). Devuelve '' si no encuentra una tabla usable.
+   */
+  _parseDescriptionTable(description) {
+    if (!description || !/<table/i.test(description)) return '';
+
+    try {
+      const doc = new DOMParser().parseFromString(description, 'text/html');
+      const pairs = [];
+
+      Array.from(doc.querySelectorAll('tr')).forEach((tr) => {
+        const cells = Array.from(tr.querySelectorAll('th,td')).map((c) => c.textContent.trim());
+        if (cells.length >= 2 && cells[0]) {
+          pairs.push([cells[0], cells.slice(1).join(' ').trim()]);
+        }
+      });
+
+      const usable = pairs.filter(([, v]) => v);
+      if (!usable.length) return '';
+
+      return usable
+        .slice(0, 14)
+        .map(([k, v]) => `<tr><td class="k">${this._escape(k)}</td><td>${this._escape(v)}</td></tr>`)
+        .join('');
+    } catch (err) {
+      return '';
+    }
   }
 
   _escape(str) {
