@@ -947,6 +947,7 @@ class LayerLoaderService {
     const xml = new DOMParser().parseFromString(text, 'text/xml');
     const geojson = toGeoJSON.kml(xml);
     this._assertHasFeatures(geojson, 'KML');
+    await this._attachOriginalIcons(xml, geojson, null);
     return geojson;
   }
 
@@ -963,7 +964,115 @@ class LayerLoaderService {
     const xml = new DOMParser().parseFromString(kmlText, 'text/xml');
     const geojson = toGeoJSON.kml(xml);
     this._assertHasFeatures(geojson, 'KMZ');
+    await this._attachOriginalIcons(xml, geojson, zip, kmlEntryName);
     return geojson;
+  }
+
+  /**
+   * El conversor toGeoJSON descarta el estilo visual del KML (solo
+   * extrae geometría y atributos). Esta función recupera el ícono
+   * ORIGINAL definido en el KML/KMZ (el mismo que se ve en ArcMap o
+   * Google Earth) y lo adjunta a cada entidad como
+   * properties.__iconHref, para que el mapa lo use tal cual en vez
+   * de dibujar una forma genérica propia.
+   */
+  async _attachOriginalIcons(xml, geojson, zip, kmlEntryName) {
+    try {
+      // 1) Mapa de estilos: id de estilo -> href del ícono (texto crudo)
+      const styleIconMap = {};
+      Array.from(xml.getElementsByTagName('Style')).forEach((styleEl) => {
+        const id = styleEl.getAttribute('id');
+        const hrefEl = styleEl.querySelector('IconStyle > Icon > href');
+        if (id && hrefEl && hrefEl.textContent) {
+          styleIconMap[id] = hrefEl.textContent.trim();
+        }
+      });
+
+      // 2) StyleMap: resuelve el id "normal" hacia el Style real
+      Array.from(xml.getElementsByTagName('StyleMap')).forEach((mapEl) => {
+        const id = mapEl.getAttribute('id');
+        const pairs = Array.from(mapEl.getElementsByTagName('Pair'));
+        const normalPair = pairs.find((p) => p.querySelector('key')?.textContent === 'normal');
+        const targetId = normalPair?.querySelector('styleUrl')?.textContent?.replace('#', '');
+        if (id && targetId && styleIconMap[targetId]) {
+          styleIconMap[id] = styleIconMap[targetId];
+        }
+      });
+
+      // 3) Cada Placemark → su href de ícono (estilo inline o styleUrl).
+      // IMPORTANTE: a cada entidad solo se le asigna la CLAVE (texto
+      // corto del href), nunca la imagen completa — así miles de
+      // postes que comparten el mismo símbolo no duplican datos.
+      const placemarks = Array.from(xml.getElementsByTagName('Placemark'));
+      if (placemarks.length !== geojson.features.length) {
+        return; // el orden no coincide 1:1 con certeza; no arriesgamos asignar mal
+      }
+
+      const uniqueHrefs = new Set();
+
+      for (let i = 0; i < placemarks.length; i++) {
+        const pm = placemarks[i];
+        let href = pm.querySelector('IconStyle > Icon > href')?.textContent?.trim();
+
+        if (!href) {
+          const styleUrl = pm.querySelector('styleUrl')?.textContent?.trim();
+          if (styleUrl) href = styleIconMap[styleUrl.replace('#', '')];
+        }
+
+        if (!href) continue;
+
+        geojson.features[i].properties = geojson.features[i].properties || {};
+        geojson.features[i].properties.__iconKey = href; // clave liviana, se repite tal cual
+        uniqueHrefs.add(href);
+      }
+
+      // 4) Cada símbolo ÚNICO se resuelve (y decodifica) una sola vez,
+      // sin importar en cuántos miles de puntos se repita.
+      const iconCache = {};
+      for (const href of uniqueHrefs) {
+        const resolved = await this._resolveIconHref(href, zip, kmlEntryName);
+        if (resolved) iconCache[href] = resolved;
+      }
+
+      if (Object.keys(iconCache).length) {
+        geojson.__iconCache = iconCache;
+      }
+    } catch (err) {
+      // Si algo falla al leer el estilo, seguimos con las formas
+      // genéricas — nunca bloqueamos la carga por esto.
+    }
+  }
+
+  /** Convierte el href del ícono en algo que <img> pueda mostrar directamente. */
+  async _resolveIconHref(href, zip, kmlEntryName) {
+    // Ícono remoto (ej. íconos estándar de Google Earth/Maps): se usa tal cual.
+    if (/^https?:\/\//i.test(href)) return href;
+
+    // Ícono embebido dentro del propio KMZ: hay que extraerlo del ZIP.
+    if (zip) {
+      const baseDir = kmlEntryName.includes('/') ? kmlEntryName.split('/').slice(0, -1).join('/') : '';
+      const candidates = [
+        baseDir ? `${baseDir}/${href}` : href,
+        href,
+        href.replace(/^\.?\//, ''),
+      ];
+
+      let entry = null;
+      for (const path of candidates) {
+        entry = zip.files[path] || Object.values(zip.files).find(
+          (f) => f.name.toLowerCase().endsWith(path.toLowerCase())
+        );
+        if (entry) break;
+      }
+      if (!entry) return null;
+
+      const base64 = await entry.async('base64');
+      const ext = href.split('.').pop().toLowerCase();
+      const mime = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', bmp: 'image/bmp' }[ext] || 'image/png';
+      return `data:${mime};base64,${base64}`;
+    }
+
+    return null; // KML suelto con ícono relativo, sin ZIP del cual extraerlo
   }
 
   async _parseShapefileZip(file) {
@@ -1032,6 +1141,7 @@ class GISLayerService {
         count: 0,
         fileNames: [],
         geojson: { type: 'FeatureCollection', features: [] }, // acumulado persistido
+        iconCache: {}, // href_original -> imagen resuelta (una sola vez por símbolo único)
       };
     });
 
@@ -1060,8 +1170,14 @@ class GISLayerService {
     const cat = GISLayerService.CATEGORIES.find(c => c.id === categoryId);
     const st = this.state[categoryId];
 
+    // Se fusiona el caché de íconos ANTES de dibujar, para que los
+    // marcadores nuevos ya encuentren su símbolo original disponible.
+    if (geojson.__iconCache) {
+      Object.assign(st.iconCache, geojson.__iconCache);
+    }
+
     const leafletLayer = L.geoJSON(geojson, {
-      pointToLayer: (feature, latlng) => this._buildPointMarker(latlng, cat),
+      pointToLayer: (feature, latlng) => this._buildPointMarker(latlng, cat, feature),
       style: () => this._buildLineStyle(cat),
       onEachFeature: (feature, layer) => this._bindPopup(feature, layer, cat),
     });
@@ -1101,8 +1217,10 @@ class GISLayerService {
       const st = this.state[record.categoryId];
       if (!cat || !st || !record.geojson || !record.geojson.features.length) return;
 
+      st.iconCache = record.iconCache || {};
+
       const leafletLayer = L.geoJSON(record.geojson, {
-        pointToLayer: (feature, latlng) => this._buildPointMarker(latlng, cat),
+        pointToLayer: (feature, latlng) => this._buildPointMarker(latlng, cat, feature),
         style: () => this._buildLineStyle(cat),
         onEachFeature: (feature, layer) => this._bindPopup(feature, layer, cat),
       });
@@ -1123,6 +1241,7 @@ class GISLayerService {
     this.persistenceService.saveCategory(categoryId, {
       geojson: st.geojson,
       fileNames: st.fileNames,
+      iconCache: st.iconCache,
     });
   }
 
@@ -1132,6 +1251,7 @@ class GISLayerService {
     st.count = 0;
     st.fileNames = [];
     st.geojson = { type: 'FeatureCollection', features: [] };
+    st.iconCache = {};
     this.persistenceService.deleteCategory(categoryId);
     this._notify();
   }
@@ -1143,6 +1263,7 @@ class GISLayerService {
       st.count = 0;
       st.fileNames = [];
       st.geojson = { type: 'FeatureCollection', features: [] };
+      st.iconCache = {};
       this.persistenceService.deleteCategory(categoryId);
     });
     this._notify();
@@ -1180,19 +1301,36 @@ class GISLayerService {
     });
   }
 
-  _buildPointMarker(latlng, cat) {
-    const shapeHtml = {
-      circle:   `<div style="width:12px;height:12px;border-radius:50%;background:${cat.color};border:2px solid #0e1116;"></div>`,
-      triangle: `<div style="width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:12px solid ${cat.color};filter:drop-shadow(0 0 1px #0e1116);"></div>`,
-      square:   `<div style="width:12px;height:12px;background:${cat.color};border:2px solid #0e1116;transform:rotate(45deg);"></div>`,
-    }[cat.shape];
+  _buildPointMarker(latlng, cat, feature) {
+    const iconKey = feature?.properties?.__iconKey;
+    const resolvedIconSrc = iconKey ? this.state[cat.id].iconCache[iconKey] : null;
 
-    const icon = L.divIcon({
-      className: '',
-      html: shapeHtml,
-      iconSize: [14, 14],
-      iconAnchor: [7, 7],
-    });
+    let icon;
+    if (resolvedIconSrc) {
+      // Se respeta el ícono TAL COMO fue guardado en el KMZ (el mismo
+      // que se ve en ArcMap/Google Earth), en vez de una forma propia.
+      icon = L.icon({
+        iconUrl: resolvedIconSrc,
+        iconSize: [30, 30],
+        iconAnchor: [15, 15],
+        popupAnchor: [0, -14],
+      });
+    } else {
+      // Sin ícono propio en el archivo (ej. Shapefile o KML sin estilo):
+      // se usa una forma genérica por categoría, como respaldo.
+      const shapeHtml = {
+        circle:   `<div style="width:12px;height:12px;border-radius:50%;background:${cat.color};border:2px solid #0e1116;"></div>`,
+        triangle: `<div style="width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:12px solid ${cat.color};filter:drop-shadow(0 0 1px #0e1116);"></div>`,
+        square:   `<div style="width:12px;height:12px;background:${cat.color};border:2px solid #0e1116;transform:rotate(45deg);"></div>`,
+      }[cat.shape];
+
+      icon = L.divIcon({
+        className: '',
+        html: shapeHtml,
+        iconSize: [14, 14],
+        iconAnchor: [7, 7],
+      });
+    }
 
     return L.marker(latlng, { icon });
   }
@@ -1204,7 +1342,7 @@ class GISLayerService {
   _bindPopup(feature, layer, cat) {
     const props = feature.properties || {};
     const rows = Object.entries(props)
-      .filter(([, v]) => v !== null && v !== undefined && v !== '')
+      .filter(([k, v]) => v !== null && v !== undefined && v !== '' && !k.startsWith('__'))
       .slice(0, 12) // evita popups gigantes en entidades con muchos campos
       .map(([k, v]) => `<tr><td class="k">${this._escape(k)}</td><td>${this._escape(String(v))}</td></tr>`)
       .join('');
