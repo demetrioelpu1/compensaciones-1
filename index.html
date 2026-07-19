@@ -470,7 +470,7 @@
         <div id="layer-chips-list"></div>
       </div>
       <div class="layers-panel-footer">
-        <p>Cada carga se SUMA a lo que ya tienes (no lo reemplaza), así puedes acumular varias zonas. Usa los interruptores para mostrar/ocultar cada capa sin perder los datos.</p>
+        <p>Cada carga se SUMA a lo que ya tienes y queda guardada en este celular, aunque compartas varios archivos por separado desde WhatsApp o cierres la app. Usa "Limpiar red cargada" solo cuando quieras empezar de cero.</p>
       </div>
     </aside>
 
@@ -834,6 +834,83 @@ class CategoryAssignmentBanner {
 // Shapefile-ZIP/GeoJSON) en GeoJSON estándar. No sabe nada de
 // Leaflet ni de categorías de red — solo parsea.
 // ---------------------------------------------------------------
+// ---------------------------------------------------------------
+// NetworkPersistenceService: guarda cada capa de red (postes,
+// subestaciones, tramos) en IndexedDB, el almacenamiento propio del
+// dispositivo. Esto es indispensable porque cada vez que el técnico
+// comparte un archivo desde WhatsApp hacia la app, Android abre la
+// app como una sesión nueva (memoria en blanco) — sin esta
+// persistencia, cada archivo compartido borraría lo cargado antes.
+// ---------------------------------------------------------------
+class NetworkPersistenceService {
+  constructor() {
+    this.dbName = 'cmp-catastro-db';
+    this.storeName = 'gis-layers';
+    this.dbPromise = this._openDB();
+  }
+
+  _openDB() {
+    return new Promise((resolve, reject) => {
+      if (!('indexedDB' in window)) {
+        reject(new Error('IndexedDB no disponible en este navegador.'));
+        return;
+      }
+      const request = indexedDB.open(this.dbName, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(this.storeName)) {
+          db.createObjectStore(this.storeName, { keyPath: 'categoryId' });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async saveCategory(categoryId, record) {
+    try {
+      const db = await this.dbPromise;
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(this.storeName, 'readwrite');
+        tx.objectStore(this.storeName).put({ categoryId, ...record });
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+    } catch (err) {
+      // Falla silenciosa: si no se pudo persistir, la app sigue
+      // funcionando igual dentro de la misma sesión, solo no
+      // sobrevivirá a un reinicio forzado por "Compartir".
+    }
+  }
+
+  async deleteCategory(categoryId) {
+    try {
+      const db = await this.dbPromise;
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(this.storeName, 'readwrite');
+        tx.objectStore(this.storeName).delete(categoryId);
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+    } catch (err) { /* silencioso */ }
+  }
+
+  async getAll() {
+    try {
+      const db = await this.dbPromise;
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction(this.storeName, 'readonly');
+        const req = tx.objectStore(this.storeName).getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error);
+      });
+    } catch (err) {
+      return [];
+    }
+  }
+}
+
+
 class LayerLoaderService {
   async parseFile(file) {
     const ext = file.name.split('.').pop().toLowerCase();
@@ -931,11 +1008,12 @@ class GISLayerService {
     { id: 'tramosBT',      label: 'Tramos de Red BT',        geomKind: 'line',  color: '#4FA3E3', shape: 'line' },
   ];
 
-  constructor(map, loaderService) {
+  constructor(map, loaderService, persistenceService) {
     this.map = map;
     this.loaderService = loaderService;
+    this.persistenceService = persistenceService;
 
-    // Estado por categoría: { group, visible, count, fileNames }
+    // Estado por categoría: { group, visible, count, fileNames, geojson }
     this.state = {};
     GISLayerService.CATEGORIES.forEach(cat => {
       this.state[cat.id] = {
@@ -953,6 +1031,7 @@ class GISLayerService {
         visible: true,
         count: 0,
         fileNames: [],
+        geojson: { type: 'FeatureCollection', features: [] }, // acumulado persistido
       };
     });
 
@@ -993,6 +1072,7 @@ class GISLayerService {
 
     st.count += featureCount; // se suma a lo ya cargado, no se reemplaza
     st.fileNames.push(file.name);
+    st.geojson.features.push(...(geojson.features || []));
 
     if (st.visible && !this.map.hasLayer(st.group)) st.group.addTo(this.map);
 
@@ -1002,8 +1082,48 @@ class GISLayerService {
       this.map.fitBounds(bounds, { padding: [40, 40], maxZoom: 18 });
     }
 
+    this._persistCategory(categoryId);
     this._notify();
     return featureCount;
+  }
+
+  /**
+   * Reconstruye las 5 capas desde IndexedDB al iniciar la app. Es la
+   * pieza clave que evita que "Compartir desde WhatsApp" borre lo
+   * cargado antes: cada apertura de la app restaura todo primero, y
+   * recién después procesa el archivo nuevo (que se ACUMULA encima).
+   */
+  async restoreFromStorage() {
+    const records = await this.persistenceService.getAll();
+
+    records.forEach((record) => {
+      const cat = GISLayerService.CATEGORIES.find(c => c.id === record.categoryId);
+      const st = this.state[record.categoryId];
+      if (!cat || !st || !record.geojson || !record.geojson.features.length) return;
+
+      const leafletLayer = L.geoJSON(record.geojson, {
+        pointToLayer: (feature, latlng) => this._buildPointMarker(latlng, cat),
+        style: () => this._buildLineStyle(cat),
+        onEachFeature: (feature, layer) => this._bindPopup(feature, layer, cat),
+      });
+      leafletLayer.eachLayer(l => st.group.addLayer(l));
+
+      st.count = record.geojson.features.length;
+      st.fileNames = record.fileNames || [];
+      st.geojson = record.geojson;
+
+      if (st.visible) st.group.addTo(this.map);
+    });
+
+    this._notify();
+  }
+
+  _persistCategory(categoryId) {
+    const st = this.state[categoryId];
+    this.persistenceService.saveCategory(categoryId, {
+      geojson: st.geojson,
+      fileNames: st.fileNames,
+    });
   }
 
   clearCategory(categoryId) {
@@ -1011,6 +1131,8 @@ class GISLayerService {
     st.group.clearLayers();
     st.count = 0;
     st.fileNames = [];
+    st.geojson = { type: 'FeatureCollection', features: [] };
+    this.persistenceService.deleteCategory(categoryId);
     this._notify();
   }
 
@@ -1020,6 +1142,8 @@ class GISLayerService {
       st.group.clearLayers();
       st.count = 0;
       st.fileNames = [];
+      st.geojson = { type: 'FeatureCollection', features: [] };
+      this.persistenceService.deleteCategory(categoryId);
     });
     this._notify();
   }
@@ -1308,7 +1432,8 @@ class AppController {
 
     // Módulo 2
     this.layerLoaderService = new LayerLoaderService();
-    this.gisLayerService = new GISLayerService(this.mapService.getMap(), this.layerLoaderService);
+    this.persistenceService = new NetworkPersistenceService();
+    this.gisLayerService = new GISLayerService(this.mapService.getMap(), this.layerLoaderService, this.persistenceService);
     this.assignmentBanner = new CategoryAssignmentBanner();
     this.layerPanelController = new LayerPanelController(this.gisLayerService, this.assignmentBanner);
     this.pendingShareController = new PendingShareController(this.gisLayerService, this.assignmentBanner);
@@ -1317,6 +1442,11 @@ class AppController {
   async start() {
     this.geoService.start();
     this._registerServiceWorker();
+    // Importante: primero se restaura toda la red ya guardada en el
+    // dispositivo, y RECIÉN DESPUÉS se procesa un archivo nuevo que
+    // haya llegado por "Compartir desde WhatsApp" — así el nuevo
+    // archivo se suma a lo anterior en vez de empezar de cero.
+    await this.gisLayerService.restoreFromStorage();
     await this.pendingShareController.checkForSharedFile();
   }
 
