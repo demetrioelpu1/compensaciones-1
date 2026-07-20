@@ -1466,9 +1466,21 @@ class GISLayerService {
     try {
       const doc = new DOMParser().parseFromString(description, 'text/html');
       const pairs = [];
+      const fileExtPattern = /\.(jpg|jpeg|png|gif|bmp|pdf|doc|docx|xls|xlsx)$/i;
 
       Array.from(doc.querySelectorAll('tr')).forEach((tr) => {
+        // Se descartan las filas de "archivos adjuntos" (fotos/PDFs
+        // referenciados como enlaces) — solo interesa la tabla de
+        // atributos reales (Empresa, Código de SET, etc.).
+        const hasFileLink = Array.from(tr.querySelectorAll('a')).some((a) =>
+          fileExtPattern.test((a.getAttribute('href') || a.textContent || '').trim())
+        );
+        if (hasFileLink) return;
+
         const cells = Array.from(tr.querySelectorAll('th,td')).map((c) => c.textContent.trim());
+        const looksLikeFileList = cells.some((c) => fileExtPattern.test(c));
+        if (looksLikeFileList) return;
+
         if (cells.length >= 2 && cells[0]) {
           pairs.push([cells[0], cells.slice(1).join(' ').trim()]);
         }
@@ -1478,7 +1490,6 @@ class GISLayerService {
       if (!usable.length) return '';
 
       return usable
-        .slice(0, 14)
         .map(([k, v]) => `<tr><td class="k">${this._escape(k)}</td><td>${this._escape(v)}</td></tr>`)
         .join('');
     } catch (err) {
