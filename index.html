@@ -1484,16 +1484,24 @@ class GISLayerService {
         );
         if (hasFileLink) return;
 
-        const cells = Array.from(tr.querySelectorAll('th,td')).map((c) => c.textContent.trim());
+        const cells = Array.from(tr.querySelectorAll('th,td')).map((c) => c.textContent.trim()).filter(Boolean);
         const looksLikeFileList = cells.some((c) => fileExtPattern.test(c));
         if (looksLikeFileList) return;
 
-        // Cada fila se muestra como UNA sola línea de texto completa
-        // (etiqueta y valor juntos, ej. "Empresa ELPU"), sin dividir
-        // en dos columnas — así se ve exactamente igual a lo que ya
-        // aparece correctamente en el celular.
-        const line = cells.filter(Boolean).join(' ').trim();
-        if (line) lines.push(line);
+        if (!cells.length) return;
+
+        // Hay dos patrones distintos según cómo ArcMap arma la tabla:
+        // (a) una fila por campo, con 2 celdas [etiqueta, valor] →
+        //     se combinan en una sola línea ("Empresa ELPU").
+        // (b) TODOS los campos en una sola fila con muchas celdas,
+        //     donde cada celda YA es un campo completo y autónomo
+        //     ("Empresa ELPU", "Código de SET 50", ...) → cada celda
+        //     se muestra en su propia línea, sin unirlas.
+        if (cells.length <= 2) {
+          lines.push(cells.join(' ').trim());
+        } else {
+          cells.forEach((c) => lines.push(c));
+        }
       });
 
       if (!lines.length) return '';
