@@ -384,10 +384,12 @@
     border:1px solid var(--line); border-radius:8px !important;
   }
   .leaflet-popup-tip{ background:var(--bar-bg-2) !important; }
-  .gis-popup table{ border-collapse:collapse; font-size:11px; }
-  .gis-popup td{ padding:2px 6px 2px 0; vertical-align:top; }
-  .gis-popup td.k{ color:var(--text-dim); font-family:var(--mono); white-space:nowrap; }
+  .gis-popup{ max-width:230px; }
+  .gis-popup table{ border-collapse:collapse; font-size:11px; width:100%; table-layout:fixed; }
+  .gis-popup td{ padding:3px 4px 3px 0; vertical-align:top; word-break:break-word; overflow-wrap:break-word; }
+  .gis-popup td.k{ color:var(--text-dim); font-family:var(--mono); font-size:9.5px; width:42%; white-space:normal; }
   .gis-popup .title{ font-weight:700; font-size:12px; margin-bottom:5px; }
+  .leaflet-popup-content{ margin:12px 14px !important; }
   .gis-popup-close-btn{
     display:block; width:100%; margin-top:10px;
     background:var(--hivis); color:#181c22; border:none; border-radius:7px;
@@ -1446,6 +1448,9 @@ class GISLayerService {
         autoPan: false, // evita que el mapa se recentre/desplace al abrir el popup
         closeButton: true,
         autoClose: false, // no se cierra solo al abrir otro (siempre requiere el botón "Cerrar")
+        maxWidth: 230,
+        minWidth: 180,
+        maxHeight: 280, // si hay muchos campos, se desplaza internamente en vez de agrandar el cuadro
       }
     );
   }
