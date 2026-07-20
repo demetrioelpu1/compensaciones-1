@@ -1663,6 +1663,36 @@ class AppController {
   }
 }
 
+// ---------------------------------------------------------------
+// Capturador global de errores: si algo en el código falla en
+// tiempo real (por ejemplo, un dato inesperado dentro de un KMZ
+// real que rompe silenciosamente el popup de atributos), esto lo
+// muestra en pantalla en vez de fallar sin ningún aviso visible.
+// ---------------------------------------------------------------
+window.addEventListener('error', (event) => {
+  showRuntimeErrorBanner(`Error: ${event.message} (línea ${event.lineno})`);
+});
+window.addEventListener('unhandledrejection', (event) => {
+  showRuntimeErrorBanner(`Error async: ${event.reason}`);
+});
+
+function showRuntimeErrorBanner(msg) {
+  let el = document.getElementById('runtime-error-banner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'runtime-error-banner';
+    el.style.cssText = 'position:fixed;left:10px;right:10px;bottom:14px;z-index:99999;' +
+      'background:#3a0d0d;border:1.5px solid #E4572E;color:#fff;font-size:11.5px;' +
+      'font-family:monospace;padding:10px 12px;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.5);' +
+      'max-height:35vh;overflow-y:auto;white-space:pre-wrap;';
+    document.body.appendChild(el);
+  }
+  const line = document.createElement('div');
+  line.style.marginBottom = '4px';
+  line.textContent = msg;
+  el.appendChild(line);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const app = new AppController();
   app.start();
