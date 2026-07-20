@@ -557,6 +557,10 @@ class MapService {
       attributionControl: true,
       center: [-15.8402, -70.0219], // fallback: Puno, Perú
       zoom: 13,
+      // El popup solo se cierra con el botón "Cerrar" o el "×", nunca
+      // solo, para evitar que desaparezca inesperadamente por
+      // interacciones cercanas del mapa (agrupamientos, GPS, etc.)
+      closePopupOnClick: false,
     });
 
     // Dos mapas base intercambiables: calles (OpenStreetMap) y
@@ -1413,20 +1417,6 @@ class GISLayerService {
   }
 
   _bindPopup(feature, layer, cat) {
-    // DIAGNÓSTICO TEMPORAL: confirma si el toque realmente llega
-    // hasta el marcador, sin importar la categoría. Si al tocar un
-    // punto aparece este aviso amarillo, el toque SÍ se detecta y el
-    // problema está más adelante; si NO aparece nada, el toque no
-    // está llegando siquiera al marcador.
-    layer.on('click', () => {
-      const el = document.getElementById('toast');
-      if (!el) return;
-      el.textContent = `Toque detectado: ${cat.label}`;
-      el.classList.add('show');
-      clearTimeout(window.__toastDebugTimer);
-      window.__toastDebugTimer = setTimeout(() => el.classList.remove('show'), 2500);
-    });
-
     // Solo Subestaciones necesita mostrar atributos al tocar — para
     // postes y tramos no es necesario, así se evita complejidad y
     // popups innecesarios en el trabajo diario.
@@ -1451,7 +1441,12 @@ class GISLayerService {
     layer.bindPopup(
       `<div class="gis-popup"><div class="title">${cat.label}</div><table>${
         rows || '<tr><td class="k">sin atributos</td></tr>'
-      }</table><button class="gis-popup-close-btn" onclick="this.closest('.leaflet-popup').querySelector('.leaflet-popup-close-button').click()">Cerrar</button></div>`
+      }</table><button class="gis-popup-close-btn" onclick="this.closest('.leaflet-popup').querySelector('.leaflet-popup-close-button').click()">Cerrar</button></div>`,
+      {
+        autoPan: false, // evita que el mapa se recentre/desplace al abrir el popup
+        closeButton: true,
+        autoClose: false, // no se cierra solo al abrir otro (siempre requiere el botón "Cerrar")
+      }
     );
   }
 
