@@ -385,9 +385,12 @@
   }
   .leaflet-popup-tip{ background:var(--bar-bg-2) !important; }
   .gis-popup{ max-width:230px; }
-  .gis-popup table{ border-collapse:collapse; font-size:11px; width:100%; table-layout:fixed; }
-  .gis-popup td{ padding:3px 4px 3px 0; vertical-align:top; word-break:break-word; overflow-wrap:break-word; }
-  .gis-popup td.k{ color:var(--text-dim); font-family:var(--mono); font-size:9.5px; width:42%; white-space:normal; }
+  .gis-popup table{ border-collapse:collapse; font-size:11.5px; width:100%; table-layout:fixed; }
+  .gis-popup td.attr-line{
+    padding:5px 0; vertical-align:top; word-break:break-word; overflow-wrap:break-word;
+    color:var(--text); border-bottom:1px solid var(--line);
+  }
+  .gis-popup tr:last-child td.attr-line{ border-bottom:none; }
   .gis-popup .title{ font-weight:700; font-size:12px; margin-bottom:5px; }
   .leaflet-popup-content{ margin:12px 14px !important; }
   .gis-popup-close-btn{
@@ -1436,7 +1439,7 @@ class GISLayerService {
       rows = Object.entries(props)
         .filter(([k, v]) => v !== null && v !== undefined && v !== '' && !k.startsWith('__') && k !== 'description')
         .slice(0, 12) // evita popups gigantes en entidades con muchos campos
-        .map(([k, v]) => `<tr><td class="k">${this._escape(k)}</td><td>${this._escape(String(v))}</td></tr>`)
+        .map(([k, v]) => `<tr><td class="attr-line">${this._escape(k)}: ${this._escape(String(v))}</td></tr>`)
         .join('');
     }
 
@@ -1446,7 +1449,7 @@ class GISLayerService {
 
     layer.bindPopup(
       `<div class="gis-popup"><div class="title">${cat.label}</div><table>${
-        rows || '<tr><td class="k">sin atributos</td></tr>'
+        rows || '<tr><td class="attr-line">sin atributos</td></tr>'
       }</table>${rawDebug}<button class="gis-popup-close-btn" onclick="this.closest('.leaflet-popup').querySelector('.leaflet-popup-close-button').click()">Cerrar</button></div>`,
       {
         autoPan: false, // evita que el mapa se recentre/desplace al abrir el popup
@@ -1469,7 +1472,7 @@ class GISLayerService {
 
     try {
       const doc = new DOMParser().parseFromString(description, 'text/html');
-      const pairs = [];
+      const lines = [];
       const fileExtPattern = /\.(jpg|jpeg|png|gif|bmp|pdf|doc|docx|xls|xlsx)$/i;
 
       Array.from(doc.querySelectorAll('tr')).forEach((tr) => {
@@ -1485,31 +1488,28 @@ class GISLayerService {
         const looksLikeFileList = cells.some((c) => fileExtPattern.test(c));
         if (looksLikeFileList) return;
 
-        if (cells.length >= 2 && cells[0]) {
-          let value = cells.slice(1).join(' ').trim();
-          // Si la celda de valor viene con el nombre del campo pegado
-          // al inicio (ej: "Empresa ELPU" en vez de solo "ELPU"), se
-          // quita ese prefijo repetido.
-          if (value.toLowerCase().startsWith(cells[0].toLowerCase())) {
-            value = value.slice(cells[0].length).trim();
-          }
-          pairs.push([cells[0], value]);
-        }
+        // Cada fila se muestra como UNA sola línea de texto completa
+        // (etiqueta y valor juntos, ej. "Empresa ELPU"), sin dividir
+        // en dos columnas — así se ve exactamente igual a lo que ya
+        // aparece correctamente en el celular.
+        const line = cells.filter(Boolean).join(' ').trim();
+        if (line) lines.push(line);
       });
 
-      const usable = pairs.filter(([, v]) => v);
-      if (!usable.length) return '';
+      if (!lines.length) return '';
 
-      // El KML de ArcMap suele repetir la misma tabla de atributos dos
-      // veces dentro de la descripción — se conserva solo la primera
-      // aparición de cada campo, descartando duplicados exactos.
-      const seen = new Map();
-      usable.forEach(([k, v]) => {
-        if (!seen.has(k)) seen.set(k, v);
+      // Algunos KML repiten la misma tabla de atributos dos veces
+      // dentro de la descripción — se conserva solo la primera
+      // aparición de cada línea exacta, descartando duplicados.
+      const seen = new Set();
+      const unique = lines.filter((line) => {
+        if (seen.has(line)) return false;
+        seen.add(line);
+        return true;
       });
 
-      return Array.from(seen.entries())
-        .map(([k, v]) => `<tr><td class="k">${this._escape(k)}</td><td>${this._escape(v)}</td></tr>`)
+      return unique
+        .map((line) => `<tr><td class="attr-line">${this._escape(line)}</td></tr>`)
         .join('');
     } catch (err) {
       return '';
