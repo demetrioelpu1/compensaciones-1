@@ -1489,7 +1489,15 @@ class GISLayerService {
       const usable = pairs.filter(([, v]) => v);
       if (!usable.length) return '';
 
-      return usable
+      // El KML de ArcMap suele repetir la misma tabla de atributos dos
+      // veces dentro de la descripción — se conserva solo la primera
+      // aparición de cada campo, descartando duplicados exactos.
+      const seen = new Map();
+      usable.forEach(([k, v]) => {
+        if (!seen.has(k)) seen.set(k, v);
+      });
+
+      return Array.from(seen.entries())
         .map(([k, v]) => `<tr><td class="k">${this._escape(k)}</td><td>${this._escape(v)}</td></tr>`)
         .join('');
     } catch (err) {
