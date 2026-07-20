@@ -388,6 +388,19 @@
   .gis-popup td{ padding:2px 6px 2px 0; vertical-align:top; }
   .gis-popup td.k{ color:var(--text-dim); font-family:var(--mono); white-space:nowrap; }
   .gis-popup .title{ font-weight:700; font-size:12px; margin-bottom:5px; }
+  .gis-popup-close-btn{
+    display:block; width:100%; margin-top:10px;
+    background:var(--hivis); color:#181c22; border:none; border-radius:7px;
+    font-family:var(--sans); font-weight:700; font-size:12px;
+    padding:9px 0; cursor:pointer;
+  }
+  /* El botón "×" propio de Leaflet, agrandado para que sea fácil de
+     tocar con el dedo (el original es muy pequeño para uso táctil) */
+  .leaflet-popup-close-button{
+    width:30px !important; height:30px !important;
+    font-size:22px !important; line-height:30px !important;
+    display:flex !important; align-items:center; justify-content:center;
+  }
 
   /* ============================================================
      BANNER · Archivo recibido desde WhatsApp (Web Share Target)
@@ -1400,6 +1413,11 @@ class GISLayerService {
   }
 
   _bindPopup(feature, layer, cat) {
+    // Solo Subestaciones necesita mostrar atributos al tocar — para
+    // postes y tramos no es necesario, así se evita complejidad y
+    // popups innecesarios en el trabajo diario.
+    if (cat.id !== 'subestaciones') return;
+
     const props = feature.properties || {};
 
     // ArcMap/ArcGIS Pro suele exportar TODOS los atributos como una
@@ -1419,7 +1437,7 @@ class GISLayerService {
     layer.bindPopup(
       `<div class="gis-popup"><div class="title">${cat.label}</div><table>${
         rows || '<tr><td class="k">sin atributos</td></tr>'
-      }</table></div>`
+      }</table><button class="gis-popup-close-btn" onclick="this.closest('.leaflet-popup').querySelector('.leaflet-popup-close-button').click()">Cerrar</button></div>`
     );
   }
 
