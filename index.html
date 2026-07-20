@@ -1440,17 +1440,21 @@ class GISLayerService {
         .join('');
     }
 
+    const rawDebug = props.description
+      ? `<details style="margin-top:9px;"><summary style="color:var(--text-dim);font-size:9.5px;cursor:pointer;">Ver datos originales (diagnóstico)</summary><div style="font-size:8.5px;white-space:pre-wrap;word-break:break-all;max-height:140px;overflow:auto;margin-top:6px;padding:6px;background:#0e1116;border-radius:6px;color:var(--text-dim);">${this._escape(props.description)}</div></details>`
+      : '';
+
     layer.bindPopup(
       `<div class="gis-popup"><div class="title">${cat.label}</div><table>${
         rows || '<tr><td class="k">sin atributos</td></tr>'
-      }</table><button class="gis-popup-close-btn" onclick="this.closest('.leaflet-popup').querySelector('.leaflet-popup-close-button').click()">Cerrar</button></div>`,
+      }</table>${rawDebug}<button class="gis-popup-close-btn" onclick="this.closest('.leaflet-popup').querySelector('.leaflet-popup-close-button').click()">Cerrar</button></div>`,
       {
         autoPan: false, // evita que el mapa se recentre/desplace al abrir el popup
         closeButton: true,
         autoClose: false, // no se cierra solo al abrir otro (siempre requiere el botón "Cerrar")
         maxWidth: 230,
         minWidth: 180,
-        maxHeight: 280, // si hay muchos campos, se desplaza internamente en vez de agrandar el cuadro
+        maxHeight: 320, // si hay muchos campos, se desplaza internamente en vez de agrandar el cuadro
       }
     );
   }
@@ -1482,7 +1486,14 @@ class GISLayerService {
         if (looksLikeFileList) return;
 
         if (cells.length >= 2 && cells[0]) {
-          pairs.push([cells[0], cells.slice(1).join(' ').trim()]);
+          let value = cells.slice(1).join(' ').trim();
+          // Si la celda de valor viene con el nombre del campo pegado
+          // al inicio (ej: "Empresa ELPU" en vez de solo "ELPU"), se
+          // quita ese prefijo repetido.
+          if (value.toLowerCase().startsWith(cells[0].toLowerCase())) {
+            value = value.slice(cells[0].length).trim();
+          }
+          pairs.push([cells[0], value]);
         }
       });
 
