@@ -1413,6 +1413,20 @@ class GISLayerService {
   }
 
   _bindPopup(feature, layer, cat) {
+    // DIAGNÓSTICO TEMPORAL: confirma si el toque realmente llega
+    // hasta el marcador, sin importar la categoría. Si al tocar un
+    // punto aparece este aviso amarillo, el toque SÍ se detecta y el
+    // problema está más adelante; si NO aparece nada, el toque no
+    // está llegando siquiera al marcador.
+    layer.on('click', () => {
+      const el = document.getElementById('toast');
+      if (!el) return;
+      el.textContent = `Toque detectado: ${cat.label}`;
+      el.classList.add('show');
+      clearTimeout(window.__toastDebugTimer);
+      window.__toastDebugTimer = setTimeout(() => el.classList.remove('show'), 2500);
+    });
+
     // Solo Subestaciones necesita mostrar atributos al tocar — para
     // postes y tramos no es necesario, así se evita complejidad y
     // popups innecesarios en el trabajo diario.
