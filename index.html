@@ -545,8 +545,8 @@ class MapService {
         attribution: '&copy; OpenStreetMap contributors',
       }),
       satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-        maxZoom: 19,
-        maxNativeZoom: 18, // más allá de este nivel, Leaflet amplía la última imagen disponible en vez de mostrar un vacío — así el acercamiento nunca se corta antes que en el mapa de calles
+        maxZoom: 21, // por encima del mapa de calles (19), para que el acercamiento se sienta mayor, no solo igual
+        maxNativeZoom: 18, // más allá de este nivel, Leaflet amplía la última imagen disponible en vez de mostrar un vacío
         attribution: 'Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics',
       }),
     };
