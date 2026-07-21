@@ -1183,6 +1183,11 @@ const SUBESTACION_FIELD_LABELS = [
   'Nro Circuitos SP', 'Nro Clientes SP', 'Máxima Demanda SP', 'Nro Circuitos AP', 'Nro Clientes AP',
   'Maxima Demanda AP', 'Máxima Demanda (kW) SP+AP', 'Código Seccionador Linea', 'Código Seccionador Sed',
   'Código de Sistema Eléctrico', 'Ubigeo', 'Localidad', 'Sucursal', 'Codigo de Obra',
+  'Propietario', 'Usuario de Creacion', 'Fecha Creación', 'Fec. Puesta en Servicio',
+  'Usuario de Actualizacion', 'Fecha Actualización', 'Fecha Retiro',
+  'VNR: Grupo', 'VNR: Componente A', 'VNR: Componente A2', 'VNR: Código',
+  'Estado Conservación', 'Estado', 'Informado a Osinergmin', 'Si Ángulo de Inclinación',
+  'Enabled', 'AncillaryRole', 'GlobalID',
 ];
 
 class GISLayerService {
@@ -1527,12 +1532,22 @@ class GISLayerService {
 
     if (matches.length < 2) return ''; // muy pocos campos reconocidos, mejor usar el respaldo
 
-    matches.sort((a, b) => a.idx - b.idx);
+    // Si dos campos empiezan en el mismo lugar (ej: "Estado" es el
+    // inicio literal de "Estado Conservación"), se prioriza el más
+    // largo/específico y se descarta el más corto para no duplicar.
+    matches.sort((a, b) => a.idx - b.idx || b.label.length - a.label.length);
+
+    const kept = [];
+    matches.forEach((m) => {
+      const prev = kept[kept.length - 1];
+      const overlapsPrevious = prev && m.idx < prev.idx + prev.label.length;
+      if (!overlapsPrevious) kept.push(m);
+    });
 
     const lines = [];
-    matches.forEach((m, i) => {
+    kept.forEach((m, i) => {
       const labelEnd = m.idx + m.label.length;
-      const valueEnd = i + 1 < matches.length ? matches[i + 1].idx : fullText.length;
+      const valueEnd = i + 1 < kept.length ? kept[i + 1].idx : fullText.length;
       const value = fullText.slice(labelEnd, valueEnd).trim();
       if (value) lines.push(`${fullText.slice(m.idx, labelEnd)} ${value}`);
     });
