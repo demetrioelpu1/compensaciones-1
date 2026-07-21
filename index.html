@@ -1166,6 +1166,25 @@ class LayerLoaderService {
 // catastro y administra sus LayerGroups de Leaflet (una capa
 // Leaflet independiente por categoría → visibilidad individual).
 // ---------------------------------------------------------------
+// ---------------------------------------------------------------
+// Lista de campos REALES que trae cada Subestación en los datos de
+// Electro Puno (según el formato de exportación de ArcMap/ArcGIS
+// Pro). Se usa para separar correctamente cada campo del texto,
+// sin importar cómo esté armada la tabla HTML por dentro (que varía
+// de un punto a otro: a veces una fila por campo, a veces todo
+// junto en una sola fila).
+// ---------------------------------------------------------------
+const SUBESTACION_FIELD_LABELS = [
+  'Empresa', 'Código de SET', 'Código de Salida MT', 'Codigo SED', 'Etiqueta de Campo',
+  'Código Estructura', 'Nombre SED', 'Direccion SED', 'Sed:Clase', 'Tipo Uso', 'Tipo SED',
+  'Tipo Instalación Eléctrica', 'Codigo Tramo MT', 'Potencia de SED (KVAR)', 'Potencia Instalada (kVA)',
+  'Código Técnico', 'Cantidad de Transformadores', 'Fases Primario', 'Tensión Nominal Primaria (kV)',
+  'Fases Secundario', 'Tensión Nominal Secundaria F-F (kV)', 'Tensión Nominal Secundaria F-N (kV)',
+  'Nro Circuitos SP', 'Nro Clientes SP', 'Máxima Demanda SP', 'Nro Circuitos AP', 'Nro Clientes AP',
+  'Maxima Demanda AP', 'Máxima Demanda (kW) SP+AP', 'Código Seccionador Linea', 'Código Seccionador Sed',
+  'Código de Sistema Eléctrico', 'Ubigeo', 'Localidad', 'Sucursal', 'Codigo de Obra',
+];
+
 class GISLayerService {
   static CATEGORIES = [
     { id: 'postesBT',      label: 'Postes de Baja Tensión',  geomKind: 'point', color: '#4FA3E3', shape: 'circle', markerSize: 14, useOriginalIcon: false },
@@ -1468,60 +1487,99 @@ class GISLayerService {
    * exportar a KML/KMZ). Devuelve '' si no encuentra una tabla usable.
    */
   _parseDescriptionTable(description) {
-    if (!description || !/<table/i.test(description)) return '';
+    if (!description) return '';
 
     try {
       const doc = new DOMParser().parseFromString(description, 'text/html');
-      const lines = [];
-      const fileExtPattern = /\.(jpg|jpeg|png|gif|bmp|pdf|doc|docx|xls|xlsx)$/i;
 
-      Array.from(doc.querySelectorAll('tr')).forEach((tr) => {
-        // Se descartan las filas de "archivos adjuntos" (fotos/PDFs
-        // referenciados como enlaces) — solo interesa la tabla de
-        // atributos reales (Empresa, Código de SET, etc.).
-        const hasFileLink = Array.from(tr.querySelectorAll('a')).some((a) =>
-          fileExtPattern.test((a.getAttribute('href') || a.textContent || '').trim())
-        );
-        if (hasFileLink) return;
+      // MÉTODO PRINCIPAL: se toma todo el texto de la descripción
+      // (sin importar cómo esté armada la tabla por dentro) y se
+      // corta exactamente donde empieza cada campo REAL conocido
+      // (Empresa, Código de SET, etc.). Esto es más confiable que
+      // adivinar la estructura de filas/celdas, que varía de un
+      // punto a otro.
+      const byLabels = this._splitByKnownLabels(doc.body.textContent);
+      if (byLabels) return byLabels;
 
-        const cells = Array.from(tr.querySelectorAll('th,td')).map((c) => c.textContent.trim()).filter(Boolean);
-        const looksLikeFileList = cells.some((c) => fileExtPattern.test(c));
-        if (looksLikeFileList) return;
-
-        if (!cells.length) return;
-
-        // Hay dos patrones distintos según cómo ArcMap arma la tabla:
-        // (a) una fila por campo, con 2 celdas [etiqueta, valor] →
-        //     se combinan en una sola línea ("Empresa ELPU").
-        // (b) TODOS los campos en una sola fila con muchas celdas,
-        //     donde cada celda YA es un campo completo y autónomo
-        //     ("Empresa ELPU", "Código de SET 50", ...) → cada celda
-        //     se muestra en su propia línea, sin unirlas.
-        if (cells.length <= 2) {
-          lines.push(cells.join(' ').trim());
-        } else {
-          cells.forEach((c) => lines.push(c));
-        }
-      });
-
-      if (!lines.length) return '';
-
-      // Algunos KML repiten la misma tabla de atributos dos veces
-      // dentro de la descripción — se conserva solo la primera
-      // aparición de cada línea exacta, descartando duplicados.
-      const seen = new Set();
-      const unique = lines.filter((line) => {
-        if (seen.has(line)) return false;
-        seen.add(line);
-        return true;
-      });
-
-      return unique
-        .map((line) => `<tr><td class="attr-line">${this._escape(line)}</td></tr>`)
-        .join('');
+      // RESPALDO: si ningún campo conocido aparece (por ejemplo, un
+      // punto con un formato distinto), se recurre al análisis de
+      // filas/celdas de la tabla HTML.
+      return this._parseDescriptionTableByRows(doc);
     } catch (err) {
       return '';
     }
+  }
+
+  _splitByKnownLabels(rawText) {
+    let fullText = rawText.replace(/\s+/g, ' ').trim();
+    const lowerText = fullText.toLowerCase();
+
+    // Se descarta todo lo que esté antes del primer campo conocido
+    // (típicamente la lista de fotos/PDFs adjuntos al inicio).
+    const firstIdx = lowerText.indexOf('empresa');
+    if (firstIdx === -1) return ''; // no parece tener el formato esperado
+
+    const matches = [];
+    SUBESTACION_FIELD_LABELS.forEach((label) => {
+      const idx = lowerText.indexOf(label.toLowerCase(), firstIdx);
+      if (idx > -1) matches.push({ label, idx });
+    });
+
+    if (matches.length < 2) return ''; // muy pocos campos reconocidos, mejor usar el respaldo
+
+    matches.sort((a, b) => a.idx - b.idx);
+
+    const lines = [];
+    matches.forEach((m, i) => {
+      const labelEnd = m.idx + m.label.length;
+      const valueEnd = i + 1 < matches.length ? matches[i + 1].idx : fullText.length;
+      const value = fullText.slice(labelEnd, valueEnd).trim();
+      if (value) lines.push(`${fullText.slice(m.idx, labelEnd)} ${value}`);
+    });
+
+    if (!lines.length) return '';
+
+    return lines
+      .map((line) => `<tr><td class="attr-line">${this._escape(line)}</td></tr>`)
+      .join('');
+  }
+
+  _parseDescriptionTableByRows(doc) {
+    if (!doc.querySelector('table')) return '';
+
+    const lines = [];
+    const fileExtPattern = /\.(jpg|jpeg|png|gif|bmp|pdf|doc|docx|xls|xlsx)$/i;
+
+    Array.from(doc.querySelectorAll('tr')).forEach((tr) => {
+      const hasFileLink = Array.from(tr.querySelectorAll('a')).some((a) =>
+        fileExtPattern.test((a.getAttribute('href') || a.textContent || '').trim())
+      );
+      if (hasFileLink) return;
+
+      const cells = Array.from(tr.querySelectorAll('th,td')).map((c) => c.textContent.trim()).filter(Boolean);
+      const looksLikeFileList = cells.some((c) => fileExtPattern.test(c));
+      if (looksLikeFileList) return;
+      if (!cells.length) return;
+
+      if (cells.length <= 2) {
+        lines.push(cells.join(' ').trim());
+      } else {
+        cells.forEach((c) => lines.push(c));
+      }
+    });
+
+    if (!lines.length) return '';
+
+    const seen = new Set();
+    const unique = lines.filter((line) => {
+      if (seen.has(line)) return false;
+      seen.add(line);
+      return true;
+    });
+
+    return unique
+      .map((line) => `<tr><td class="attr-line">${this._escape(line)}</td></tr>`)
+      .join('');
   }
 
   _escape(str) {
