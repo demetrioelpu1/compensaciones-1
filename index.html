@@ -2279,6 +2279,16 @@ class AcometidaDrawController {
         coordinates: this.points.map((p) => [p.lng, p.lat]),
       },
     };
+
+    // La línea ya trazada queda PERMANENTE en el mapa: se quitan solo
+    // los puntitos guía de dibujo, y se "desvincula" la línea del
+    // estado interno (sin borrarla) para que el próximo start() del
+    // siguiente suministro no la elimine por error.
+    this.vertexMarkers.forEach((m) => this.sketchLayerGroup.removeLayer(m));
+    this.vertexMarkers = [];
+    this.previewLine = null;
+    this.points = [];
+
     this._teardown();
     if (typeof this.onFinish === 'function') this.onFinish(geojson);
   }
@@ -2413,6 +2423,7 @@ class BarcodeScanController {
 class SupplyWorkflowController {
   constructor(mapService, persistenceService) {
     this.persistenceService = persistenceService;
+    this.sketchLayerGroup = mapService.sketchLayerGroup;
     this.drawController = new AcometidaDrawController(mapService);
     this.scanController = new BarcodeScanController();
 
@@ -2456,6 +2467,7 @@ class SupplyWorkflowController {
 
     this._bindEvents();
     this._refreshCounter();
+    this._restoreSavedLines();
   }
 
   _bindEvents() {
@@ -2635,6 +2647,22 @@ class SupplyWorkflowController {
     this.savedCount = total;
     this.counterValueEl.textContent = total;
     this.counterEl.classList.toggle('show', total > 0);
+  }
+
+  /**
+   * Vuelve a dibujar en el mapa las líneas de acometida de TODOS los
+   * suministros ya guardados. Así, aunque cierres la app o la
+   * reinicie "Compartir desde WhatsApp", las líneas ya trazadas
+   * nunca desaparecen.
+   */
+  async _restoreSavedLines() {
+    const supplies = await this.persistenceService.getAll();
+    supplies.forEach((s) => {
+      if (!s.lineGeoJSON) return;
+      L.geoJSON(s.lineGeoJSON, {
+        style: () => ({ color: '#E4572E', weight: 8, opacity: 0.95 }),
+      }).addTo(this.sketchLayerGroup);
+    });
   }
 
   _escape(str) {
