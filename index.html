@@ -441,6 +441,214 @@
     width:100%; background:transparent; border:1px solid var(--line); border-radius:8px;
     color:var(--text-dim); font-size:11px; padding:7px; cursor:pointer;
   }
+
+  /* ============================================================
+     MÓDULO · REGISTRO DE SUMINISTRO (acometida → escaneo → forma → fotos)
+     ============================================================ */
+
+  /* Botón flotante que inicia el flujo (esquina inferior izquierda,
+     para no chocar con los controles de mapa de la derecha) */
+  #btn-new-supply{
+    position:absolute; left:14px; bottom:14px;
+    display:flex; align-items:center; gap:8px;
+    background:var(--danger); color:#fff; border:none;
+    border-radius:24px; padding:12px 16px 12px 13px;
+    font-family:var(--sans); font-weight:700; font-size:12.5px;
+    box-shadow:0 6px 18px rgba(228,87,46,.45);
+    z-index:900; cursor:pointer;
+  }
+  #btn-new-supply svg{ width:18px; height:18px; stroke:#fff; fill:none; stroke-width:2.2; }
+  #btn-new-supply.hidden{ display:none; }
+
+  /* Contador de suministros registrados en la sesión */
+  #supply-counter{
+    position:absolute; left:14px; bottom:74px;
+    background:var(--bar-bg-2); border:1px solid var(--line); border-radius:8px;
+    padding:6px 10px; font-family:var(--mono); font-size:10.5px; color:var(--text-dim);
+    z-index:900; display:none;
+  }
+  #supply-counter.show{ display:block; }
+  #supply-counter b{ color:var(--hivis); }
+
+  /* Barra de dibujo de acometida */
+  #draw-toolbar{
+    display:none;
+    position:absolute; left:14px; right:14px; bottom:14px;
+    background:var(--bar-bg-2); border:1.5px solid var(--danger);
+    border-radius:12px; padding:12px 14px; z-index:1000;
+    box-shadow:0 8px 24px rgba(0,0,0,.5);
+  }
+  #draw-toolbar.show{ display:block; }
+  #draw-toolbar .hint{
+    font-size:11.5px; color:var(--text); margin-bottom:10px; display:flex; align-items:center; gap:8px;
+  }
+  #draw-toolbar .hint .dot-red{
+    width:10px; height:4px; background:var(--danger); border-radius:2px; flex-shrink:0;
+  }
+  #draw-toolbar .actions{ display:flex; gap:8px; }
+  #draw-toolbar button{
+    flex:1; border:none; border-radius:8px; padding:11px 0;
+    font-family:var(--sans); font-weight:700; font-size:12px; cursor:pointer;
+  }
+  #draw-toolbar .btn-finish{ background:var(--hivis); color:#181c22; }
+  #draw-toolbar .btn-undo{ background:#181c22; color:var(--text); border:1px solid var(--line) !important; }
+  #draw-toolbar .btn-cancel{ background:transparent; color:var(--danger); border:1px solid rgba(228,87,46,.35) !important; }
+
+  /* Banner "Escanear código de barras" tras terminar la línea */
+  #scan-prompt-banner{
+    display:none;
+    position:absolute; left:14px; right:14px; bottom:14px;
+    background:var(--bar-bg-2); border:1.5px solid var(--hivis);
+    border-radius:12px; padding:14px; z-index:1000;
+    box-shadow:0 8px 24px rgba(0,0,0,.5); text-align:center;
+  }
+  #scan-prompt-banner.show{ display:block; }
+  #scan-prompt-banner p{ font-size:11.5px; color:var(--text-dim); margin:0 0 10px; }
+  #scan-prompt-banner .btn-scan{
+    width:100%; background:var(--hivis); color:#181c22; border:none;
+    border-radius:9px; padding:12px 0; font-weight:700; font-size:13px;
+    display:flex; align-items:center; justify-content:center; gap:8px; cursor:pointer;
+  }
+  #scan-prompt-banner .btn-skip{
+    width:100%; background:transparent; color:var(--text-dim); border:none;
+    padding:9px 0; font-size:11px; margin-top:4px; cursor:pointer;
+  }
+
+  /* Modal de escaneo de código de barras (cámara) */
+  #scanner-modal{
+    display:none;
+    position:fixed; inset:0; z-index:2000; background:#000;
+    flex-direction:column;
+  }
+  #scanner-modal.show{ display:flex; }
+  #scanner-video{
+    flex:1; width:100%; object-fit:cover; background:#000;
+  }
+  #scanner-overlay{
+    position:absolute; top:0; left:0; right:0; bottom:0;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    pointer-events:none;
+  }
+  #scanner-viewfinder{
+    width:78%; max-width:340px; height:110px;
+    border:2.5px solid var(--hivis); border-radius:12px;
+    box-shadow:0 0 0 2000px rgba(0,0,0,.45);
+  }
+  #scanner-hint{
+    color:#fff; font-size:12px; margin-top:16px; text-align:center;
+    background:rgba(0,0,0,.5); padding:6px 14px; border-radius:20px;
+  }
+  #scanner-controls{
+    position:absolute; top:0; left:0; right:0; padding:16px;
+    display:flex; justify-content:space-between; align-items:center;
+    z-index:2010;
+  }
+  #scanner-controls button{
+    background:rgba(24,28,34,.85); border:1px solid var(--line); color:#fff;
+    border-radius:20px; padding:9px 16px; font-size:12px; font-weight:600; cursor:pointer;
+  }
+
+  /* Tabla de datos extraídos del código de barras */
+  #scan-result-modal{
+    display:none;
+    position:fixed; inset:0; z-index:2100;
+    background:rgba(0,0,0,.6);
+    align-items:center; justify-content:center; padding:20px;
+  }
+  #scan-result-modal.show{ display:flex; }
+  #scan-result-card{
+    background:var(--bar-bg-2); border:1px solid var(--line); border-radius:14px;
+    max-width:320px; width:100%; max-height:70vh; overflow-y:auto;
+    padding:16px;
+  }
+  #scan-result-card .head{
+    display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;
+  }
+  #scan-result-card .head h3{ font-size:13px; margin:0; color:var(--text); }
+  #scan-result-card .close-x{
+    width:30px; height:30px; border-radius:50%; border:1px solid var(--line);
+    background:#181c22; color:var(--text); font-size:16px; line-height:1;
+    display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0;
+  }
+  #scan-result-card table{ width:100%; border-collapse:collapse; font-size:11.5px; }
+  #scan-result-card td{ padding:5px 0; border-bottom:1px solid var(--line); color:var(--text); word-break:break-all; }
+  #scan-result-card tr:last-child td{ border-bottom:none; }
+
+  /* Formulario de datos del suministro */
+  #supply-form-modal{
+    display:none;
+    position:fixed; inset:0; z-index:1900; background:var(--bg,#0e1116);
+    background:#0e1116; flex-direction:column;
+  }
+  #supply-form-modal.show{ display:flex; }
+  #supply-form-header{
+    padding:14px 16px; border-bottom:1px solid var(--line);
+    display:flex; align-items:center; justify-content:space-between; flex-shrink:0;
+  }
+  #supply-form-header h2{ font-size:13px; margin:0; color:var(--text); }
+  #supply-form-body{ flex:1; overflow-y:auto; padding:14px 16px; }
+  .supply-field{ margin-bottom:14px; }
+  .supply-field label{
+    display:block; font-size:10.5px; font-weight:700; letter-spacing:.03em;
+    color:var(--text-dim); text-transform:uppercase; margin-bottom:6px;
+  }
+  .supply-field .auto-badge{
+    display:inline-block; background:rgba(46,139,87,.18); color:var(--ok);
+    font-size:9px; font-weight:700; padding:1px 6px; border-radius:8px; margin-left:6px;
+    text-transform:none; letter-spacing:0;
+  }
+  .supply-field input[type=text], .supply-field input[type=number], .supply-field select{
+    width:100%; background:var(--bar-bg-2); border:1px solid var(--line); border-radius:9px;
+    padding:11px 12px; color:var(--text); font-family:var(--sans); font-size:13px;
+  }
+  .supply-field input:focus, .supply-field select:focus{ border-color:var(--hivis); outline:none; }
+  .supply-field-hint{ font-size:10px; color:var(--text-dim); margin-top:5px; }
+  .phase-compare{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  #supply-form-footer{ padding:14px 16px 18px; border-top:1px solid var(--line); flex-shrink:0; }
+  #btn-supply-form-continue{
+    width:100%; background:var(--hivis); color:#181c22; border:none; border-radius:10px;
+    padding:13px 0; font-weight:700; font-size:13.5px; cursor:pointer;
+  }
+  #btn-supply-form-continue:disabled{ opacity:.4; }
+  .supply-form-error{ color:var(--danger); font-size:10.5px; margin-top:6px; display:none; }
+  .supply-form-error.show{ display:block; }
+
+  /* Captura de 3 fotografías */
+  #photo-capture-modal{
+    display:none;
+    position:fixed; inset:0; z-index:1950; background:#0e1116; flex-direction:column;
+  }
+  #photo-capture-modal.show{ display:flex; }
+  #photo-capture-header{
+    padding:14px 16px; border-bottom:1px solid var(--line);
+    display:flex; align-items:center; justify-content:space-between; flex-shrink:0;
+  }
+  #photo-capture-header h2{ font-size:13px; margin:0; color:var(--text); }
+  #photo-capture-body{ flex:1; overflow-y:auto; padding:18px 16px; }
+  .photo-slots{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  .photo-slot{
+    aspect-ratio:3/4; border-radius:10px; border:1.5px dashed var(--line);
+    background:var(--bar-bg-2); display:flex; align-items:center; justify-content:center;
+    flex-direction:column; gap:6px; cursor:pointer; overflow:hidden; position:relative;
+  }
+  .photo-slot.filled{ border-style:solid; border-color:var(--ok); }
+  .photo-slot img{ width:100%; height:100%; object-fit:cover; }
+  .photo-slot .slot-label{ font-size:10px; color:var(--text-dim); }
+  .photo-slot .retake-badge{
+    position:absolute; bottom:4px; right:4px; background:rgba(24,28,34,.85);
+    border-radius:6px; padding:3px 6px; font-size:9px; color:#fff;
+  }
+  .photo-slot input[type=file]{ display:none; }
+  #photo-capture-footer{ padding:14px 16px 18px; border-top:1px solid var(--line); flex-shrink:0; }
+  #btn-save-supply{
+    width:100%; background:var(--ok); color:#fff; border:none; border-radius:10px;
+    padding:13px 0; font-weight:700; font-size:13.5px; cursor:pointer;
+  }
+  #btn-save-supply:disabled{ opacity:.4; }
+  .supply-btn-back{
+    background:transparent; border:1px solid var(--line); color:var(--text-dim);
+    border-radius:8px; padding:8px 12px; font-size:11px; cursor:pointer;
+  }
 </style>
 </head>
 <body>
@@ -509,6 +717,134 @@
       <p>No identifiqué la capa automáticamente. ¿A cuál pertenece?</p>
       <div class="share-banner-options" id="share-banner-options"></div>
       <button id="share-banner-dismiss">Descartar</button>
+    </div>
+
+    <!-- ============================================================
+         MÓDULO · REGISTRO DE SUMINISTRO
+         ============================================================ -->
+
+    <div id="supply-counter"><b id="supply-counter-value">0</b> suministros registrados</div>
+
+    <button id="btn-new-supply">
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      <span>Nuevo suministro</span>
+    </button>
+
+    <div id="draw-toolbar">
+      <div class="hint"><span class="dot-red"></span><span>Toca el mapa para marcar la acometida: desde la red BT hasta el medidor</span></div>
+      <div class="actions">
+        <button class="btn-cancel" id="btn-draw-cancel">Cancelar</button>
+        <button class="btn-undo" id="btn-draw-undo">Deshacer punto</button>
+        <button class="btn-finish" id="btn-draw-finish">Finalizar línea</button>
+      </div>
+    </div>
+
+    <div id="scan-prompt-banner">
+      <p>Línea de acometida registrada. Ahora escanea el código de barras del medidor.</p>
+      <button class="btn-scan" id="btn-open-scanner">
+        <svg viewBox="0 0 24 24" width="18" height="18" stroke="#181c22" fill="none" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14M11 5v14M15 5v14"/></svg>
+        Escanear código de barras
+      </button>
+      <button class="btn-skip" id="btn-skip-scanner">No se puede escanear — ingresar manualmente</button>
+    </div>
+  </div>
+
+  <!-- Modal de cámara para escaneo de código de barras -->
+  <div id="scanner-modal">
+    <div id="scanner-controls">
+      <button id="btn-scanner-cancel">Cancelar</button>
+      <button id="btn-scanner-manual">Ingresar manualmente</button>
+    </div>
+    <video id="scanner-video" autoplay playsinline muted></video>
+    <div id="scanner-overlay">
+      <div id="scanner-viewfinder"></div>
+      <div id="scanner-hint">Apunta al código de barras del medidor</div>
+    </div>
+  </div>
+
+  <!-- Tabla de datos extraídos del código de barras -->
+  <div id="scan-result-modal">
+    <div id="scan-result-card">
+      <div class="head">
+        <h3>Código escaneado</h3>
+        <button class="close-x" id="btn-close-scan-result">✕</button>
+      </div>
+      <table id="scan-result-table"></table>
+    </div>
+  </div>
+
+  <!-- Formulario de datos del suministro -->
+  <div id="supply-form-modal">
+    <div id="supply-form-header">
+      <h2>Datos del suministro</h2>
+      <button class="close-btn" id="btn-close-supply-form">
+        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="supply-form-body">
+      <div class="supply-field">
+        <label for="f-codigo-suministro">Código Suministro</label>
+        <input type="text" id="f-codigo-suministro" inputmode="numeric" placeholder="Ej. 1234567" />
+      </div>
+      <div class="supply-field">
+        <label for="f-codigo-ruta">Código Ruta</label>
+        <input type="text" id="f-codigo-ruta" placeholder="Ej. RT-014" />
+      </div>
+      <div class="supply-field">
+        <label>Fase de Alimentación</label>
+        <div class="phase-compare">
+          <div>
+            <label for="f-fase-sistema" style="font-weight:400;text-transform:none;font-size:9.5px;">Según sistema (si se conoce)</label>
+            <select id="f-fase-sistema">
+              <option value="">No disponible</option>
+              <option value="R">R</option><option value="S">S</option><option value="T">T</option>
+              <option value="RS">RS</option><option value="ST">ST</option><option value="RT">RT</option>
+              <option value="RST">RST</option>
+            </select>
+          </div>
+          <div>
+            <label for="f-fase-campo" style="font-weight:400;text-transform:none;font-size:9.5px;">Verificada en campo *</label>
+            <select id="f-fase-campo">
+              <option value="">Selecciona…</option>
+              <option value="R">R</option><option value="S">S</option><option value="T">T</option>
+              <option value="RS">RS</option><option value="ST">ST</option><option value="RT">RT</option>
+              <option value="RST">RST</option>
+            </select>
+          </div>
+        </div>
+        <div class="supply-field-hint">Si el dato del sistema no coincide con lo observado en campo, se guarda la fase verificada en campo como la correcta.</div>
+      </div>
+      <div class="supply-field">
+        <label for="f-etiqueta-sed">Etiqueta SED</label>
+        <input type="text" id="f-etiqueta-sed" placeholder="Ej. SE04732" />
+      </div>
+      <div class="supply-field">
+        <label for="f-medidor-serie">Medidor: Serie <span class="auto-badge hidden" id="serie-auto-badge">auto</span></label>
+        <input type="text" id="f-medidor-serie" placeholder="Escanea el código o ingresa manualmente" />
+      </div>
+      <div class="supply-form-error" id="supply-form-error">Completa los campos obligatorios antes de continuar.</div>
+    </div>
+    <div id="supply-form-footer">
+      <button id="btn-supply-form-continue">Continuar a fotografías</button>
+    </div>
+  </div>
+
+  <!-- Captura de 3 fotografías -->
+  <div id="photo-capture-modal">
+    <div id="photo-capture-header">
+      <button class="supply-btn-back" id="btn-photos-back">← Volver</button>
+      <h2>Fotografías del suministro</h2>
+      <span style="width:60px;"></span>
+    </div>
+    <div id="photo-capture-body">
+      <div class="photo-slots">
+        <label class="photo-slot" data-slot="0"><span class="slot-label">Foto 1</span><input type="file" accept="image/*" capture="environment" /></label>
+        <label class="photo-slot" data-slot="1"><span class="slot-label">Foto 2</span><input type="file" accept="image/*" capture="environment" /></label>
+        <label class="photo-slot" data-slot="2"><span class="slot-label">Foto 3</span><input type="file" accept="image/*" capture="environment" /></label>
+      </div>
+    </div>
+    <div id="photo-capture-footer">
+      <button id="btn-save-supply" disabled>Guardar suministro y continuar con el siguiente</button>
     </div>
   </div>
 
@@ -1795,12 +2131,538 @@ class BasemapToggleController {
   }
 }
 
+// ---------------------------------------------------------------
+// SupplyPersistenceService: guarda cada suministro registrado
+// (línea de acometida + código de barras + formulario + 3 fotos)
+// en IndexedDB, el almacenamiento propio del dispositivo. Igual que
+// con la red eléctrica, esto sobrevive a que la app se reinicie.
+// ---------------------------------------------------------------
+class SupplyPersistenceService {
+  constructor() {
+    this.dbName = 'cmp-supplies-db';
+    this.storeName = 'supplies';
+    this.dbPromise = this._openDB();
+  }
+
+  _openDB() {
+    return new Promise((resolve, reject) => {
+      if (!('indexedDB' in window)) {
+        reject(new Error('IndexedDB no disponible en este navegador.'));
+        return;
+      }
+      const request = indexedDB.open(this.dbName, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(this.storeName)) {
+          db.createObjectStore(this.storeName, { keyPath: 'id', autoIncrement: true });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async saveSupply(record) {
+    const db = await this.dbPromise;
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(this.storeName, 'readwrite');
+      const req = tx.objectStore(this.storeName).add(record);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async getAll() {
+    try {
+      const db = await this.dbPromise;
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction(this.storeName, 'readonly');
+        const req = tx.objectStore(this.storeName).getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error);
+      });
+    } catch (err) {
+      return [];
+    }
+  }
+
+  async count() {
+    try {
+      const db = await this.dbPromise;
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction(this.storeName, 'readonly');
+        const req = tx.objectStore(this.storeName).count();
+        req.onsuccess = () => resolve(req.result || 0);
+        req.onerror = () => reject(req.error);
+      });
+    } catch (err) {
+      return 0;
+    }
+  }
+}
+
+// ---------------------------------------------------------------
+// AcometidaDrawController: dibujo interactivo de la línea de
+// acometida (toque a toque) directamente sobre el mapa, en rojo y
+// con grosor visible. No sabe nada de código de barras, formularios
+// ni fotos — solo produce una geometría (GeoJSON LineString) cuando
+// el técnico termina de dibujar.
+// ---------------------------------------------------------------
+class AcometidaDrawController {
+  constructor(mapService) {
+    this.map = mapService.getMap();
+    this.sketchLayerGroup = mapService.sketchLayerGroup;
+
+    this.active = false;
+    this.points = [];
+    this.vertexMarkers = [];
+    this.previewLine = null;
+
+    this.toolbar = document.getElementById('draw-toolbar');
+    this.btnFinish = document.getElementById('btn-draw-finish');
+    this.btnUndo = document.getElementById('btn-draw-undo');
+    this.btnCancel = document.getElementById('btn-draw-cancel');
+
+    this._onMapClick = this._onMapClick.bind(this);
+    this.btnFinish.addEventListener('click', () => this._finish());
+    this.btnUndo.addEventListener('click', () => this._undo());
+    this.btnCancel.addEventListener('click', () => this._cancel());
+
+    this.onFinish = null; // callback(lineGeoJSON) — lo define quien orquesta
+    this.onCancel = null; // callback() — lo define quien orquesta
+  }
+
+  start() {
+    this.active = true;
+    this.points = [];
+    this._clearPreview();
+    this.toolbar.classList.add('show');
+    this.map.on('click', this._onMapClick);
+  }
+
+  _onMapClick(e) {
+    this.points.push(e.latlng);
+    const dot = L.circleMarker(e.latlng, {
+      radius: 5, color: '#0e1116', weight: 2, fillColor: '#E4572E', fillOpacity: 1,
+    }).addTo(this.sketchLayerGroup);
+    this.vertexMarkers.push(dot);
+    this._redrawPreview();
+  }
+
+  _redrawPreview() {
+    if (this.previewLine) this.sketchLayerGroup.removeLayer(this.previewLine);
+    if (this.points.length >= 2) {
+      // Grosor bien visible (8px) para que la acometida se distinga
+      // con claridad sobre el mapa, tal como se pidió.
+      this.previewLine = L.polyline(this.points, { color: '#E4572E', weight: 8, opacity: 0.95 }).addTo(this.sketchLayerGroup);
+    }
+  }
+
+  _undo() {
+    if (!this.points.length) return;
+    this.points.pop();
+    const lastDot = this.vertexMarkers.pop();
+    if (lastDot) this.sketchLayerGroup.removeLayer(lastDot);
+    this._redrawPreview();
+  }
+
+  _finish() {
+    if (this.points.length < 2) {
+      this._toast('Marca al menos 2 puntos: inicio en la red BT y fin en el medidor.');
+      return;
+    }
+    const geojson = {
+      type: 'Feature',
+      properties: {},
+      geometry: {
+        type: 'LineString',
+        coordinates: this.points.map((p) => [p.lng, p.lat]),
+      },
+    };
+    this._teardown();
+    if (typeof this.onFinish === 'function') this.onFinish(geojson);
+  }
+
+  _cancel() {
+    this._clearPreview();
+    this._teardown();
+    if (typeof this.onCancel === 'function') this.onCancel();
+  }
+
+  _teardown() {
+    this.active = false;
+    this.toolbar.classList.remove('show');
+    this.map.off('click', this._onMapClick);
+  }
+
+  _clearPreview() {
+    this.vertexMarkers.forEach((m) => this.sketchLayerGroup.removeLayer(m));
+    this.vertexMarkers = [];
+    if (this.previewLine) {
+      this.sketchLayerGroup.removeLayer(this.previewLine);
+      this.previewLine = null;
+    }
+  }
+
+  _toast(msg) {
+    const el = document.getElementById('toast');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+  }
+}
+
+// ---------------------------------------------------------------
+// BarcodeScanController: abre la cámara y usa la BarcodeDetector API
+// nativa del navegador (disponible en Chrome Android sin librerías
+// externas) para leer el código de barras del medidor. Si el
+// dispositivo no la soporta, ofrece directamente la entrada manual.
+// ---------------------------------------------------------------
+class BarcodeScanController {
+  constructor() {
+    this.modal = document.getElementById('scanner-modal');
+    this.video = document.getElementById('scanner-video');
+    this.btnCancel = document.getElementById('btn-scanner-cancel');
+    this.btnManual = document.getElementById('btn-scanner-manual');
+
+    this.stream = null;
+    this.detector = null;
+    this.scanning = false;
+    this._onResult = null;
+    this._onManual = null;
+
+    this.btnCancel.addEventListener('click', () => this._close());
+    this.btnManual.addEventListener('click', () => {
+      this._close();
+      if (typeof this._onManual === 'function') this._onManual();
+    });
+  }
+
+  async open(onResult, onManual) {
+    this._onResult = onResult;
+    this._onManual = onManual;
+
+    if (!('BarcodeDetector' in window)) {
+      this._toast('Este celular no soporta lectura automática. Ingresa el dato manualmente.');
+      if (typeof onManual === 'function') onManual();
+      return;
+    }
+
+    try {
+      this.detector = new window.BarcodeDetector({
+        formats: ['code_128', 'code_39', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'itf', 'codabar'],
+      });
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' },
+      });
+      this.video.srcObject = this.stream;
+      this.modal.classList.add('show');
+      this.scanning = true;
+      this._scanLoop();
+    } catch (err) {
+      this._toast('No se pudo abrir la cámara. Ingresa el dato manualmente.');
+      if (typeof onManual === 'function') onManual();
+    }
+  }
+
+  async _scanLoop() {
+    if (!this.scanning) return;
+    try {
+      const codes = await this.detector.detect(this.video);
+      if (codes && codes.length) {
+        const value = codes[0].rawValue;
+        this._close();
+        if (typeof this._onResult === 'function') this._onResult(value);
+        return;
+      }
+    } catch (err) {
+      // frame no válido para detectar todavía, se reintenta
+    }
+    requestAnimationFrame(() => this._scanLoop());
+  }
+
+  _close() {
+    this.scanning = false;
+    this.modal.classList.remove('show');
+    if (this.stream) {
+      this.stream.getTracks().forEach((t) => t.stop());
+      this.stream = null;
+    }
+    this.video.srcObject = null;
+  }
+
+  _toast(msg) {
+    const el = document.getElementById('toast');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+  }
+}
+
+// ---------------------------------------------------------------
+// SupplyWorkflowController: orquesta el ciclo completo por
+// suministro — a) dibujar acometida → b) escanear código → c)
+// formulario → d) 3 fotos → guardar → vuelve a "a" para el
+// siguiente usuario. Une los servicios/controladores anteriores sin
+// que ellos se conozcan entre sí.
+// ---------------------------------------------------------------
+class SupplyWorkflowController {
+  constructor(mapService, persistenceService) {
+    this.persistenceService = persistenceService;
+    this.drawController = new AcometidaDrawController(mapService);
+    this.scanController = new BarcodeScanController();
+
+    this.current = null; // acumula los datos del suministro en curso
+
+    // Botón de inicio / contador
+    this.btnStart = document.getElementById('btn-new-supply');
+    this.counterEl = document.getElementById('supply-counter');
+    this.counterValueEl = document.getElementById('supply-counter-value');
+    this.savedCount = 0;
+
+    // Paso b: banner de escaneo
+    this.scanPromptBanner = document.getElementById('scan-prompt-banner');
+    this.btnOpenScanner = document.getElementById('btn-open-scanner');
+    this.btnSkipScanner = document.getElementById('btn-skip-scanner');
+
+    // Resultado del escaneo
+    this.scanResultModal = document.getElementById('scan-result-modal');
+    this.scanResultTable = document.getElementById('scan-result-table');
+    this.btnCloseScanResult = document.getElementById('btn-close-scan-result');
+
+    // Paso c: formulario
+    this.formModal = document.getElementById('supply-form-modal');
+    this.btnCloseForm = document.getElementById('btn-close-supply-form');
+    this.btnFormContinue = document.getElementById('btn-supply-form-continue');
+    this.formError = document.getElementById('supply-form-error');
+    this.fCodigoSuministro = document.getElementById('f-codigo-suministro');
+    this.fCodigoRuta = document.getElementById('f-codigo-ruta');
+    this.fFaseSistema = document.getElementById('f-fase-sistema');
+    this.fFaseCampo = document.getElementById('f-fase-campo');
+    this.fEtiquetaSed = document.getElementById('f-etiqueta-sed');
+    this.fMedidorSerie = document.getElementById('f-medidor-serie');
+    this.serieAutoBadge = document.getElementById('serie-auto-badge');
+
+    // Paso d: fotos
+    this.photoModal = document.getElementById('photo-capture-modal');
+    this.btnPhotosBack = document.getElementById('btn-photos-back');
+    this.btnSaveSupply = document.getElementById('btn-save-supply');
+    this.photoSlots = Array.from(document.querySelectorAll('.photo-slot'));
+    this.photoFiles = [null, null, null];
+
+    this._bindEvents();
+    this._refreshCounter();
+  }
+
+  _bindEvents() {
+    this.btnStart.addEventListener('click', () => this._startNewSupply());
+
+    this.drawController.onFinish = (lineGeoJSON) => this._onLineFinished(lineGeoJSON);
+    this.drawController.onCancel = () => this._resetToStart();
+
+    this.btnOpenScanner.addEventListener('click', () => {
+      this.scanPromptBanner.classList.remove('show');
+      this.scanController.open(
+        (rawValue) => this._onScanResult(rawValue),
+        () => this._openForm(null)
+      );
+    });
+    this.btnSkipScanner.addEventListener('click', () => {
+      this.scanPromptBanner.classList.remove('show');
+      this._openForm(null);
+    });
+
+    this.btnCloseScanResult.addEventListener('click', () => {
+      this.scanResultModal.classList.remove('show');
+      this._openForm(this.current.scannedValue);
+    });
+
+    this.btnCloseForm.addEventListener('click', () => {
+      if (window.confirm('¿Cancelar el registro de este suministro? Se perderá lo avanzado.')) {
+        this._resetToStart();
+      }
+    });
+    this.btnFormContinue.addEventListener('click', () => this._onFormContinue());
+
+    this.btnPhotosBack.addEventListener('click', () => {
+      this.photoModal.classList.remove('show');
+      this.formModal.classList.add('show');
+    });
+
+    this.photoSlots.forEach((slot) => {
+      const input = slot.querySelector('input[type=file]');
+      input.addEventListener('change', (e) => this._onPhotoSelected(slot, e.target.files[0]));
+    });
+
+    this.btnSaveSupply.addEventListener('click', () => this._saveSupplyAndContinue());
+  }
+
+  // --- Paso a: dibujar acometida --------------------------------
+  _startNewSupply() {
+    this.current = { lineGeoJSON: null, scannedValue: null, form: null, photos: [] };
+    this.btnStart.classList.add('hidden');
+    this.drawController.start();
+  }
+
+  _onLineFinished(lineGeoJSON) {
+    this.current.lineGeoJSON = lineGeoJSON;
+    this.scanPromptBanner.classList.add('show');
+  }
+
+  // --- Paso b: escaneo de código de barras -----------------------
+  _onScanResult(rawValue) {
+    this.current.scannedValue = rawValue;
+    this._renderScanResultTable(rawValue);
+    this.scanResultModal.classList.add('show');
+  }
+
+  _renderScanResultTable(rawValue) {
+    // La mayoría de códigos de medidor codifican solo la serie como
+    // texto plano. Si el código trae varios campos separados (con
+    // "|", ";" o saltos de línea tipo clave:valor), se muestran
+    // como filas separadas; si no, se muestra como un solo dato.
+    const parts = rawValue.split(/[\n;|]/).map((p) => p.trim()).filter(Boolean);
+    let rowsHtml = '';
+
+    if (parts.length > 1) {
+      rowsHtml = parts.map((p) => `<tr><td>${this._escape(p)}</td></tr>`).join('');
+    } else {
+      rowsHtml = `<tr><td>${this._escape(rawValue)}</td></tr>`;
+    }
+    this.scanResultTable.innerHTML = rowsHtml;
+  }
+
+  // --- Paso c: formulario -----------------------------------------
+  _openForm(prefillSerie) {
+    this.fCodigoSuministro.value = '';
+    this.fCodigoRuta.value = '';
+    this.fFaseSistema.value = '';
+    this.fFaseCampo.value = '';
+    this.fEtiquetaSed.value = '';
+    this.fMedidorSerie.value = prefillSerie || '';
+    this.serieAutoBadge.classList.toggle('hidden', !prefillSerie);
+    this.formError.classList.remove('show');
+    this.formModal.classList.add('show');
+  }
+
+  _onFormContinue() {
+    const required = [this.fCodigoSuministro, this.fCodigoRuta, this.fFaseCampo, this.fEtiquetaSed, this.fMedidorSerie];
+    const allFilled = required.every((el) => el.value.trim() !== '');
+
+    if (!allFilled) {
+      this.formError.classList.add('show');
+      return;
+    }
+    this.formError.classList.remove('show');
+
+    this.current.form = {
+      codigoSuministro: this.fCodigoSuministro.value.trim(),
+      codigoRuta: this.fCodigoRuta.value.trim(),
+      faseSistema: this.fFaseSistema.value || null,
+      faseCampo: this.fFaseCampo.value,
+      etiquetaSed: this.fEtiquetaSed.value.trim(),
+      medidorSerie: this.fMedidorSerie.value.trim(),
+    };
+
+    this.formModal.classList.remove('show');
+    this._openPhotoCapture();
+  }
+
+  // --- Paso d: fotografías -----------------------------------------
+  _openPhotoCapture() {
+    this.photoFiles = [null, null, null];
+    this.photoSlots.forEach((slot, i) => {
+      slot.classList.remove('filled');
+      slot.innerHTML = `<span class="slot-label">Foto ${i + 1}</span><input type="file" accept="image/*" capture="environment" />`;
+      slot.querySelector('input').addEventListener('change', (e) => this._onPhotoSelected(slot, e.target.files[0]));
+    });
+    this.btnSaveSupply.disabled = true;
+    this.photoModal.classList.add('show');
+  }
+
+  _onPhotoSelected(slot, file) {
+    if (!file) return;
+    const idx = Number(slot.dataset.slot);
+    this.photoFiles[idx] = file;
+
+    const url = URL.createObjectURL(file);
+    slot.classList.add('filled');
+    slot.innerHTML = `<img src="${url}" /><span class="retake-badge">Retomar</span><input type="file" accept="image/*" capture="environment" />`;
+    slot.querySelector('input').addEventListener('change', (e) => this._onPhotoSelected(slot, e.target.files[0]));
+
+    this.btnSaveSupply.disabled = this.photoFiles.some((f) => !f);
+  }
+
+  async _saveSupplyAndContinue() {
+    this.current.photos = this.photoFiles;
+
+    try {
+      await this.persistenceService.saveSupply({
+        lineGeoJSON: this.current.lineGeoJSON,
+        scannedValue: this.current.scannedValue,
+        form: this.current.form,
+        photos: this.current.photos, // Blobs — IndexedDB los guarda de forma nativa
+        savedAt: new Date().toISOString(),
+      });
+
+      this.savedCount++;
+      this._refreshCounter();
+      this._toast(`Suministro guardado (${this.savedCount}). Listo para el siguiente.`);
+
+      this.photoModal.classList.remove('show');
+      this._startNewSupply(); // vuelve directo al paso "a" para el siguiente usuario
+    } catch (err) {
+      this._toast('No se pudo guardar el suministro: ' + (err.message || err));
+    }
+  }
+
+  // --- Utilidades ----------------------------------------------------
+  _resetToStart() {
+    this.current = null;
+    this.scanPromptBanner.classList.remove('show');
+    this.scanResultModal.classList.remove('show');
+    this.formModal.classList.remove('show');
+    this.photoModal.classList.remove('show');
+    this.btnStart.classList.remove('hidden');
+  }
+
+  async _refreshCounter() {
+    const total = await this.persistenceService.count();
+    this.savedCount = total;
+    this.counterValueEl.textContent = total;
+    this.counterEl.classList.toggle('show', total > 0);
+  }
+
+  _escape(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  _toast(msg) {
+    const el = document.getElementById('toast');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+  }
+}
+
 class AppController {
   constructor() {
     this.mapService = new MapService('map');
     this.geoService = new GeolocationService();
     this.uiController = new UIController(this.mapService, this.geoService);
     this.basemapToggleController = new BasemapToggleController(this.mapService);
+
+    // Módulo de registro de suministro (acometida → escaneo → forma → fotos)
+    this.supplyPersistenceService = new SupplyPersistenceService();
+    this.supplyWorkflowController = new SupplyWorkflowController(this.mapService, this.supplyPersistenceService);
 
     // Módulo 2
     this.layerLoaderService = new LayerLoaderService();
