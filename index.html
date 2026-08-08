@@ -800,6 +800,8 @@
               <option value="R">R</option><option value="S">S</option><option value="T">T</option>
               <option value="RS">RS</option><option value="ST">ST</option><option value="RT">RT</option>
               <option value="RST">RST</option>
+              <option value="RN">RN</option><option value="SN">SN</option><option value="TN">TN</option>
+              <option value="RSTN">RSTN</option>
             </select>
           </div>
           <div>
@@ -809,6 +811,8 @@
               <option value="R">R</option><option value="S">S</option><option value="T">T</option>
               <option value="RS">RS</option><option value="ST">ST</option><option value="RT">RT</option>
               <option value="RST">RST</option>
+              <option value="RN">RN</option><option value="SN">SN</option><option value="TN">TN</option>
+              <option value="RSTN">RSTN</option>
             </select>
           </div>
         </div>
@@ -1530,6 +1534,17 @@ const SUBESTACION_FIELD_LABELS = [
   'Medidor AP:Tipo', 'Medidor AP:Marca', 'Medidor AP:Modelo',
 ];
 
+// Solo estos 6 campos se muestran en el popup de Subestaciones (de
+// toda la lista completa de arriba), en este orden.
+const SUBESTACION_DISPLAY_FIELDS = [
+  'Etiqueta de Campo',
+  'SIELSE:Etiqueta',
+  'SED:Etiqueta Anterior',
+  'Potencia Instalada (kVA)',
+  'Tipo Uso',
+  'Fases Primario',
+];
+
 class GISLayerService {
   static CATEGORIES = [
     { id: 'postesBT',      label: 'Postes de Baja Tensión',  geomKind: 'point', color: '#4FA3E3', shape: 'circle', markerSize: 14, useOriginalIcon: false },
@@ -1843,13 +1858,27 @@ class GISLayerService {
       // (Empresa, Código de SET, etc.). Esto es más confiable que
       // adivinar la estructura de filas/celdas, que varía de un
       // punto a otro.
-      const byLabels = this._splitByKnownLabels(doc.body.textContent);
-      if (byLabels) return byLabels;
+      let lines = this._splitByKnownLabels(doc.body.textContent);
 
       // RESPALDO: si ningún campo conocido aparece (por ejemplo, un
       // punto con un formato distinto), se recurre al análisis de
       // filas/celdas de la tabla HTML.
-      return this._parseDescriptionTableByRows(doc);
+      if (!lines) lines = this._parseDescriptionTableByRows(doc);
+      if (!lines || !lines.length) return '';
+
+      // Solo se muestran los campos pedidos (Etiqueta de Campo,
+      // SIELSE:Etiqueta, SED:Etiqueta Anterior, Potencia Instalada,
+      // Tipo Uso, Fases Primario), en ese orden, aunque el archivo
+      // traiga muchos más campos.
+      const filtered = SUBESTACION_DISPLAY_FIELDS
+        .map((label) => lines.find((line) => line.toLowerCase().startsWith(label.toLowerCase())))
+        .filter(Boolean);
+
+      const finalLines = filtered.length ? filtered : lines; // si no coincide ninguno, se muestra todo como respaldo
+
+      return finalLines
+        .map((line) => `<tr><td class="attr-line">${this._escape(line)}</td></tr>`)
+        .join('');
     } catch (err) {
       return '';
     }
@@ -1862,7 +1891,7 @@ class GISLayerService {
     // Se descarta todo lo que esté antes del primer campo conocido
     // (típicamente la lista de fotos/PDFs adjuntos al inicio).
     const firstIdx = lowerText.indexOf('empresa');
-    if (firstIdx === -1) return ''; // no parece tener el formato esperado
+    if (firstIdx === -1) return null; // no parece tener el formato esperado
 
     const matches = [];
     SUBESTACION_FIELD_LABELS.forEach((label) => {
@@ -1870,7 +1899,7 @@ class GISLayerService {
       if (idx > -1) matches.push({ label, idx });
     });
 
-    if (matches.length < 2) return ''; // muy pocos campos reconocidos, mejor usar el respaldo
+    if (matches.length < 2) return null; // muy pocos campos reconocidos, mejor usar el respaldo
 
     // Si dos campos empiezan en el mismo lugar (ej: "Estado" es el
     // inicio literal de "Estado Conservación"), se prioriza el más
@@ -1892,15 +1921,11 @@ class GISLayerService {
       if (value) lines.push(`${fullText.slice(m.idx, labelEnd)} ${value}`);
     });
 
-    if (!lines.length) return '';
-
-    return lines
-      .map((line) => `<tr><td class="attr-line">${this._escape(line)}</td></tr>`)
-      .join('');
+    return lines.length ? lines : null;
   }
 
   _parseDescriptionTableByRows(doc) {
-    if (!doc.querySelector('table')) return '';
+    if (!doc.querySelector('table')) return null;
 
     const lines = [];
     const fileExtPattern = /\.(jpg|jpeg|png|gif|bmp|pdf|doc|docx|xls|xlsx)$/i;
@@ -1923,7 +1948,7 @@ class GISLayerService {
       }
     });
 
-    if (!lines.length) return '';
+    if (!lines.length) return null;
 
     const seen = new Set();
     const unique = lines.filter((line) => {
@@ -1932,9 +1957,7 @@ class GISLayerService {
       return true;
     });
 
-    return unique
-      .map((line) => `<tr><td class="attr-line">${this._escape(line)}</td></tr>`)
-      .join('');
+    return unique;
   }
 
   _escape(str) {
@@ -2254,7 +2277,7 @@ class AcometidaDrawController {
     if (this.points.length >= 2) {
       // Grosor bien visible (8px) para que la acometida se distinga
       // con claridad sobre el mapa, tal como se pidió.
-      this.previewLine = L.polyline(this.points, { color: '#E4572E', weight: 8, opacity: 0.95 }).addTo(this.sketchLayerGroup);
+      this.previewLine = L.polyline(this.points, { color: '#E4572E', weight: 3, opacity: 0.95 }).addTo(this.sketchLayerGroup);
     }
   }
 
@@ -2660,7 +2683,7 @@ class SupplyWorkflowController {
     supplies.forEach((s) => {
       if (!s.lineGeoJSON) return;
       L.geoJSON(s.lineGeoJSON, {
-        style: () => ({ color: '#E4572E', weight: 8, opacity: 0.95 }),
+        style: () => ({ color: '#E4572E', weight: 3, opacity: 0.95 }),
       }).addTo(this.sketchLayerGroup);
     });
   }
