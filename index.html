@@ -1815,6 +1815,12 @@ class GISLayerService {
     // listado genérico de propiedades planas.
     let rows = this._parseDescriptionTable(props.description);
 
+    // Se recuerda la Etiqueta de Campo y la Fase Primario de esta
+    // Subestación: el módulo de registro de suministro los usa para
+    // precargar "Etiqueta SED" y "Fase (sistema)" automáticamente
+    // cuando el técnico inicie un suministro después de tocar aquí.
+    window.__lastSubestacionContext = this._extractSubestacionContext(props.description);
+
     if (!rows) {
       rows = Object.entries(props)
         .filter(([k, v]) => v !== null && v !== undefined && v !== '' && !k.startsWith('__') && k !== 'description')
@@ -1847,6 +1853,32 @@ class GISLayerService {
    * "BalloonStyle" que ArcMap/ArcGIS Pro incluye en <description> al
    * exportar a KML/KMZ). Devuelve '' si no encuentra una tabla usable.
    */
+  /**
+   * Extrae específicamente "Etiqueta de Campo" y "Fases Primario" de
+   * una Subestación (reutilizando la misma detección de campos que
+   * usa el popup), para que el módulo de suministro pueda precargar
+   * "Etiqueta SED" y "Fase (sistema)" automáticamente.
+   */
+  _extractSubestacionContext(description) {
+    if (!description) return null;
+    try {
+      const doc = new DOMParser().parseFromString(description, 'text/html');
+      let lines = this._splitByKnownLabels(doc.body.textContent);
+      if (!lines) lines = this._parseDescriptionTableByRows(doc);
+      if (!lines) return null;
+
+      const etiquetaLine = lines.find((l) => l.toLowerCase().startsWith('etiqueta de campo'));
+      const faseLine = lines.find((l) => l.toLowerCase().startsWith('fases primario'));
+
+      return {
+        etiquetaCampo: etiquetaLine ? etiquetaLine.replace(/^etiqueta de campo/i, '').trim() : null,
+        fasesPrimario: faseLine ? faseLine.replace(/^fases primario/i, '').trim() : null,
+      };
+    } catch (err) {
+      return null;
+    }
+  }
+
   _parseDescriptionTable(description) {
     if (!description) return '';
 
@@ -2630,17 +2662,28 @@ class SupplyWorkflowController {
   // --- Paso c: formulario -----------------------------------------
   _openForm(prefillFields) {
     const f = prefillFields || {};
+    const sed = window.__lastSubestacionContext || {};
+    const faseOptions = Array.from(this.fFaseCampo.options).map((o) => o.value);
+
     this.fCodigoSuministro.value = f.codigoSuministro || '';
     this.fCodigoRuta.value = f.codigoRuta || '';
-    this.fFaseSistema.value = '';
+
+    // "Fase (sistema)" se precarga con lo que trae la Subestación
+    // tocada más recientemente (dato de referencia, no obligatorio).
+    this.fFaseSistema.value = sed.fasesPrimario && faseOptions.includes(sed.fasesPrimario.toUpperCase())
+      ? sed.fasesPrimario.toUpperCase() : '';
+
     // Solo se aplica la fase escaneada si coincide con una opción
     // válida del selector; si no, queda vacía para completar a mano.
-    const faseOptions = Array.from(this.fFaseCampo.options).map((o) => o.value);
     this.fFaseCampo.value = f.fase && faseOptions.includes(f.fase.toUpperCase()) ? f.fase.toUpperCase() : '';
-    this.fEtiquetaSed.value = f.etiquetaSed || '';
+
+    // "Etiqueta SED" prioriza lo escaneado; si el código no trae ese
+    // dato, se usa la Etiqueta de Campo de la Subestación tocada.
+    this.fEtiquetaSed.value = f.etiquetaSed || sed.etiquetaCampo || '';
+
     this.fMedidorSerie.value = f.medidorSerie || '';
 
-    const anyAuto = Object.values(f).some(Boolean);
+    const anyAuto = Object.values(f).some(Boolean) || !!sed.etiquetaCampo || !!sed.fasesPrimario;
     this.serieAutoBadge.classList.toggle('hidden', !anyAuto);
     this.formError.classList.remove('show');
     this.formModal.classList.add('show');
