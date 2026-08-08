@@ -570,8 +570,9 @@
     background:#181c22; color:var(--text); font-size:16px; line-height:1;
     display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0;
   }
-  #scan-result-card table{ width:100%; border-collapse:collapse; font-size:11.5px; }
-  #scan-result-card td{ padding:5px 0; border-bottom:1px solid var(--line); color:var(--text); word-break:break-all; }
+  #scan-result-card table{ width:100%; border-collapse:collapse; font-size:11.5px; table-layout:fixed; }
+  #scan-result-card td{ padding:5px 4px 5px 0; border-bottom:1px solid var(--line); color:var(--text); word-break:break-word; }
+  #scan-result-card td.k{ color:var(--text-dim); font-size:10px; width:42%; white-space:normal; }
   #scan-result-card tr:last-child td{ border-bottom:none; }
 
   /* Formulario de datos del suministro */
@@ -1886,6 +1887,10 @@ class GISLayerService {
 
   _splitByKnownLabels(rawText) {
     let fullText = rawText.replace(/\s+/g, ' ').trim();
+    // Normaliza el espacio después de ":" (algunos campos del KML
+    // real traen "SED: Etiqueta Anterior" y otros "SED:Etiqueta
+    // Anterior" — se unifica para que la búsqueda no falle por eso).
+    fullText = fullText.replace(/:\s+/g, ':');
     const lowerText = fullText.toLowerCase();
 
     // Se descarta todo lo que esté antes del primer campo conocido
@@ -2513,7 +2518,7 @@ class SupplyWorkflowController {
 
     this.btnCloseScanResult.addEventListener('click', () => {
       this.scanResultModal.classList.remove('show');
-      this._openForm(this.current.scannedValue);
+      this._openForm(this.current.scannedFields);
     });
 
     this.btnCloseForm.addEventListener('click', () => {
@@ -2550,36 +2555,93 @@ class SupplyWorkflowController {
 
   // --- Paso b: escaneo de código de barras -----------------------
   _onScanResult(rawValue) {
-    this.current.scannedValue = rawValue;
-    this._renderScanResultTable(rawValue);
+    // Algunos escáneres devuelven el valor con un prefijo técnico de
+    // símbología pegado al inicio (ej: "]C1" para Code128) que no es
+    // parte del dato real — se quita antes de usarlo.
+    const cleaned = this._stripAimPrefix(rawValue);
+    this.current.scannedValue = cleaned;
+    this.current.scannedFields = this._parseBarcodeFields(cleaned);
+    this._renderScanResultTable(cleaned, this.current.scannedFields);
     this.scanResultModal.classList.add('show');
   }
 
-  _renderScanResultTable(rawValue) {
-    // La mayoría de códigos de medidor codifican solo la serie como
-    // texto plano. Si el código trae varios campos separados (con
-    // "|", ";" o saltos de línea tipo clave:valor), se muestran
-    // como filas separadas; si no, se muestra como un solo dato.
-    const parts = rawValue.split(/[\n;|]/).map((p) => p.trim()).filter(Boolean);
-    let rowsHtml = '';
+  _stripAimPrefix(value) {
+    return value.replace(/^\][A-Za-z]\d/, '').trim();
+  }
 
-    if (parts.length > 1) {
-      rowsHtml = parts.map((p) => `<tr><td>${this._escape(p)}</td></tr>`).join('');
-    } else {
-      rowsHtml = `<tr><td>${this._escape(rawValue)}</td></tr>`;
+  /**
+   * Intenta reconocer varios campos dentro de un mismo código
+   * escaneado, para repartirlos automáticamente en Código
+   * Suministro / Código Ruta / Fase / Etiqueta SED / Medidor:Serie.
+   * Si el código solo trae un dato (lo más común en un código de
+   * barras físico), se usa como serie del medidor únicamente.
+   */
+  _parseBarcodeFields(value) {
+    const fields = {};
+    const kvPattern = /(c[oó]digo\s*suministro|suministro|c[oó]digo\s*ruta|ruta|fase|etiqueta\s*sed|sed|serie|medidor)\s*[:=]\s*([^;|\n]+)/gi;
+    let match;
+    let foundAny = false;
+
+    while ((match = kvPattern.exec(value)) !== null) {
+      foundAny = true;
+      const key = match[1].toLowerCase();
+      const val = match[2].trim();
+      if (key.includes('suministro')) fields.codigoSuministro = val;
+      else if (key.includes('ruta')) fields.codigoRuta = val;
+      else if (key.includes('fase')) fields.fase = val;
+      else if (key.includes('sed')) fields.etiquetaSed = val;
+      else if (key.includes('serie') || key.includes('medidor')) fields.medidorSerie = val;
     }
-    this.scanResultTable.innerHTML = rowsHtml;
+    if (foundAny) return fields;
+
+    // Sin pares "clave:valor" — si trae exactamente 5 partes
+    // separadas por ";", "|" o salto de línea, se asume el orden:
+    // Suministro, Ruta, Fase, Etiqueta SED, Serie.
+    const parts = value.split(/[\n;|]/).map((p) => p.trim()).filter(Boolean);
+    if (parts.length === 5) {
+      return {
+        codigoSuministro: parts[0],
+        codigoRuta: parts[1],
+        fase: parts[2],
+        etiquetaSed: parts[3],
+        medidorSerie: parts[4],
+      };
+    }
+
+    // Caso más común: el código trae solo la serie del medidor.
+    return { medidorSerie: value };
+  }
+
+  _renderScanResultTable(rawValue, fields) {
+    const labelMap = {
+      codigoSuministro: 'Código Suministro',
+      codigoRuta: 'Código Ruta',
+      fase: 'Fase',
+      etiquetaSed: 'Etiqueta SED',
+      medidorSerie: 'Medidor: Serie',
+    };
+    const rowsHtml = Object.entries(fields || {})
+      .filter(([, v]) => v)
+      .map(([k, v]) => `<tr><td class="k">${this._escape(labelMap[k] || k)}</td><td>${this._escape(v)}</td></tr>`)
+      .join('');
+    this.scanResultTable.innerHTML = rowsHtml || `<tr><td>${this._escape(rawValue)}</td></tr>`;
   }
 
   // --- Paso c: formulario -----------------------------------------
-  _openForm(prefillSerie) {
-    this.fCodigoSuministro.value = '';
-    this.fCodigoRuta.value = '';
+  _openForm(prefillFields) {
+    const f = prefillFields || {};
+    this.fCodigoSuministro.value = f.codigoSuministro || '';
+    this.fCodigoRuta.value = f.codigoRuta || '';
     this.fFaseSistema.value = '';
-    this.fFaseCampo.value = '';
-    this.fEtiquetaSed.value = '';
-    this.fMedidorSerie.value = prefillSerie || '';
-    this.serieAutoBadge.classList.toggle('hidden', !prefillSerie);
+    // Solo se aplica la fase escaneada si coincide con una opción
+    // válida del selector; si no, queda vacía para completar a mano.
+    const faseOptions = Array.from(this.fFaseCampo.options).map((o) => o.value);
+    this.fFaseCampo.value = f.fase && faseOptions.includes(f.fase.toUpperCase()) ? f.fase.toUpperCase() : '';
+    this.fEtiquetaSed.value = f.etiquetaSed || '';
+    this.fMedidorSerie.value = f.medidorSerie || '';
+
+    const anyAuto = Object.values(f).some(Boolean);
+    this.serieAutoBadge.classList.toggle('hidden', !anyAuto);
     this.formError.classList.remove('show');
     this.formModal.classList.add('show');
   }
