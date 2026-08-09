@@ -646,6 +646,30 @@
     padding:13px 0; font-weight:700; font-size:13.5px; cursor:pointer;
   }
   #btn-save-supply:disabled{ opacity:.4; }
+
+  #btn-pick-from-gallery{
+    width:100%; margin-top:16px; background:transparent; border:1.5px dashed var(--line);
+    color:var(--text-dim); border-radius:10px; padding:12px 0; font-size:12px; font-weight:600; cursor:pointer;
+  }
+
+  #gallery-target-modal{
+    display:none; position:fixed; inset:0; z-index:2200;
+    background:rgba(0,0,0,.65); align-items:center; justify-content:center; padding:20px;
+  }
+  #gallery-target-modal.show{ display:flex; }
+  #gallery-target-card{
+    background:var(--bar-bg-2); border:1px solid var(--line); border-radius:14px;
+    max-width:300px; width:100%; padding:18px;
+  }
+  #gallery-target-card h3{ font-size:13px; color:var(--text); margin:0 0 12px; text-align:center; }
+  .gallery-target-btn{
+    display:block; width:100%; background:#181c22; border:1px solid var(--line); color:var(--text);
+    border-radius:9px; padding:11px 0; font-size:13px; font-weight:600; margin-bottom:8px; cursor:pointer;
+  }
+  #btn-gallery-target-cancel{
+    display:block; width:100%; background:transparent; border:none; color:var(--text-dim);
+    padding:9px 0; font-size:11px; cursor:pointer;
+  }
   .supply-btn-back{
     background:transparent; border:1px solid var(--line); color:var(--text-dim);
     border-radius:8px; padding:8px 12px; font-size:11px; cursor:pointer;
@@ -786,10 +810,6 @@
     </div>
     <div id="supply-form-body">
       <div class="supply-field">
-        <label for="f-codigo-ruta">Código Ruta</label>
-        <input type="text" id="f-codigo-ruta" placeholder="Ej. RT-014" />
-      </div>
-      <div class="supply-field">
         <label for="f-fase-campo">Fase de Alimentación *</label>
         <select id="f-fase-campo">
           <option value="">Selecciona…</option>
@@ -823,6 +843,19 @@
         <label class="photo-slot" data-slot="0"><span class="slot-label">Foto 1</span><input type="file" accept="image/*" capture="environment" /></label>
         <label class="photo-slot" data-slot="1"><span class="slot-label">Foto 2</span><input type="file" accept="image/*" capture="environment" /></label>
         <label class="photo-slot" data-slot="2"><span class="slot-label">Foto 3</span><input type="file" accept="image/*" capture="environment" /></label>
+      </div>
+      <button id="btn-pick-from-gallery">Usar una foto de la galería</button>
+      <input type="file" id="gallery-file-input" accept="image/*" style="display:none;" />
+    </div>
+
+    <!-- Menú: a qué casilla asignar la foto elegida de la galería -->
+    <div id="gallery-target-modal">
+      <div id="gallery-target-card">
+        <h3>¿Reemplazar cuál foto?</h3>
+        <button class="gallery-target-btn" data-slot="0">Foto 1</button>
+        <button class="gallery-target-btn" data-slot="1">Foto 2</button>
+        <button class="gallery-target-btn" data-slot="2">Foto 3</button>
+        <button id="btn-gallery-target-cancel">Cancelar</button>
       </div>
     </div>
     <div id="photo-capture-footer">
@@ -2514,7 +2547,6 @@ class SupplyWorkflowController {
     this.btnCloseForm = document.getElementById('btn-close-supply-form');
     this.btnFormContinue = document.getElementById('btn-supply-form-continue');
     this.formError = document.getElementById('supply-form-error');
-    this.fCodigoRuta = document.getElementById('f-codigo-ruta');
     this.fFaseCampo = document.getElementById('f-fase-campo');
     this.fMedidorSerie = document.getElementById('f-medidor-serie');
     this.serieAutoBadge = document.getElementById('serie-auto-badge');
@@ -2525,6 +2557,11 @@ class SupplyWorkflowController {
     this.btnSaveSupply = document.getElementById('btn-save-supply');
     this.photoSlots = Array.from(document.querySelectorAll('.photo-slot'));
     this.photoFiles = [null, null, null];
+    this.btnPickFromGallery = document.getElementById('btn-pick-from-gallery');
+    this.galleryFileInput = document.getElementById('gallery-file-input');
+    this.galleryTargetModal = document.getElementById('gallery-target-modal');
+    this.btnGalleryTargetCancel = document.getElementById('btn-gallery-target-cancel');
+    this._pendingGalleryFile = null;
 
     this._bindEvents();
     this._refreshCounter();
@@ -2577,6 +2614,29 @@ class SupplyWorkflowController {
       input.addEventListener('change', (e) => this._onPhotoSelected(slot, e.target.files[0]));
     });
 
+    this.btnPickFromGallery.addEventListener('click', () => this.galleryFileInput.click());
+    this.galleryFileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      this.galleryFileInput.value = ''; // permite volver a elegir el mismo archivo después
+      if (!file) return;
+      this._pendingGalleryFile = file;
+      this.galleryTargetModal.classList.add('show');
+    });
+    document.querySelectorAll('.gallery-target-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const idx = Number(btn.dataset.slot);
+        this.galleryTargetModal.classList.remove('show');
+        if (this._pendingGalleryFile) {
+          this._onPhotoSelected(this.photoSlots[idx], this._pendingGalleryFile);
+          this._pendingGalleryFile = null;
+        }
+      });
+    });
+    this.btnGalleryTargetCancel.addEventListener('click', () => {
+      this.galleryTargetModal.classList.remove('show');
+      this._pendingGalleryFile = null;
+    });
+
     this.btnSaveSupply.addEventListener('click', () => this._saveSupplyAndContinue());
   }
 
@@ -2614,7 +2674,6 @@ class SupplyWorkflowController {
   _openForm(prefillFields) {
     const f = prefillFields || {};
 
-    this.fCodigoRuta.value = f.codigoRuta || '';
     this.fFaseCampo.value = ''; // siempre a elegir manualmente
     this.fMedidorSerie.value = f.medidorSerie || '';
 
@@ -2625,7 +2684,7 @@ class SupplyWorkflowController {
   }
 
   _onFormContinue() {
-    const required = [this.fCodigoRuta, this.fFaseCampo, this.fMedidorSerie];
+    const required = [this.fFaseCampo, this.fMedidorSerie];
     const allFilled = required.every((el) => el.value.trim() !== '');
 
     if (!allFilled) {
@@ -2635,7 +2694,6 @@ class SupplyWorkflowController {
     this.formError.classList.remove('show');
 
     this.current.form = {
-      codigoRuta: this.fCodigoRuta.value.trim(),
       faseCampo: this.fFaseCampo.value,
       medidorSerie: this.fMedidorSerie.value.trim(),
     };
