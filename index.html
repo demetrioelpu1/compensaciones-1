@@ -284,6 +284,11 @@
     width:14px; height:14px; stroke:var(--text-dim); fill:none; stroke-width:2;
     transition:transform .2s; flex-shrink:0;
   }
+  .sel-file-delete{
+    background:transparent; border:none; padding:4px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; flex-shrink:0;
+  }
+  .sel-file-delete svg{ stroke:var(--danger) !important; }
   .sel-file-item.open .chevron{ transform:rotate(180deg); }
   .sel-file-content{
     display:none; padding:0 12px 12px; border-top:1px solid var(--line);
@@ -780,9 +785,15 @@
           <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
+      <div style="padding:10px 16px 0;">
+        <button id="btn-clear-all-sel" class="bulk-clear-btn">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>
+          <span>Limpiar todo</span>
+        </button>
+      </div>
       <div class="layers-panel-body" id="sel-files-list"></div>
       <div class="layers-panel-footer">
-        <p>Comparte cada archivo .sel desde WhatsApp hacia esta app (botón Compartir → CMP), uno por uno. Aparecerán aquí como un menú — toca el nombre para ver u ocultar su contenido.</p>
+        <p>Comparte cada archivo .sel desde WhatsApp hacia esta app (botón Compartir → CMP), uno por uno. Aparecerán aquí como un menú — toca el nombre para ver u ocultar su contenido. Usa el ícono de basurero de cada archivo para quitarlo individualmente, o "Limpiar todo" para borrarlos todos.</p>
       </div>
     </aside>
 
@@ -1361,6 +1372,16 @@ class SelFilePersistenceService {
     return new Promise((resolve, reject) => {
       const tx = db.transaction(this.storeName, 'readwrite');
       tx.objectStore(this.storeName).put({ fileName, content, savedAt: new Date().toISOString() });
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async deleteFile(fileName) {
+    const db = await this.dbPromise;
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(this.storeName, 'readwrite');
+      tx.objectStore(this.storeName).delete(fileName);
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
     });
@@ -2964,12 +2985,14 @@ class SelFilesController {
     this.panel = document.getElementById('sel-panel');
     this.btnToggle = document.getElementById('btn-sel-files');
     this.btnClose = document.getElementById('btn-close-sel-panel');
+    this.btnClearAll = document.getElementById('btn-clear-all-sel');
     this.listEl = document.getElementById('sel-files-list');
     this.badge = document.getElementById('sel-files-badge');
     this.openNames = new Set(); // qué archivos están desplegados, para no colapsarlos al re-renderizar
 
     this.btnToggle.addEventListener('click', () => this._togglePanel());
     this.btnClose.addEventListener('click', () => this._togglePanel(false));
+    this.btnClearAll.addEventListener('click', () => this._handleClearAll());
 
     this._renderFromStorage();
   }
@@ -2979,6 +3002,20 @@ class SelFilesController {
     this.openNames.add(fileName); // el recién llegado se muestra abierto
     await this._renderFromStorage();
     this._togglePanel(true);
+  }
+
+  async _handleDeleteFile(fileName) {
+    if (!window.confirm(`¿Quitar "${fileName}"?`)) return;
+    await this.persistenceService.deleteFile(fileName);
+    this.openNames.delete(fileName);
+    await this._renderFromStorage();
+  }
+
+  async _handleClearAll() {
+    if (!window.confirm('¿Quitar TODOS los archivos SEL?')) return;
+    await this.persistenceService.clearAll();
+    this.openNames.clear();
+    await this._renderFromStorage();
   }
 
   _togglePanel(force) {
@@ -3008,6 +3045,9 @@ class SelFilesController {
         <div class="sel-file-header">
           <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
           <span class="name">${this._escape(f.fileName)}</span>
+          <button class="sel-file-delete" title="Quitar este archivo" data-filename="${this._escape(f.fileName)}">
+            <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" fill="none" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>
+          </button>
           <svg class="chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
         </div>
         <div class="sel-file-content"><pre>${this._escape(this._filterContent(f.content))}</pre></div>
@@ -3016,6 +3056,10 @@ class SelFilesController {
         item.classList.toggle('open');
         if (item.classList.contains('open')) this.openNames.add(f.fileName);
         else this.openNames.delete(f.fileName);
+      });
+      item.querySelector('.sel-file-delete').addEventListener('click', (e) => {
+        e.stopPropagation(); // no despliega/oculta el contenido al tocar el basurero
+        this._handleDeleteFile(f.fileName);
       });
       this.listEl.appendChild(item);
     });
