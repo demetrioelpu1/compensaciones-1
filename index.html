@@ -786,44 +786,19 @@
     </div>
     <div id="supply-form-body">
       <div class="supply-field">
-        <label for="f-codigo-suministro">Código Suministro</label>
-        <input type="text" id="f-codigo-suministro" inputmode="numeric" placeholder="Ej. 1234567" />
-      </div>
-      <div class="supply-field">
         <label for="f-codigo-ruta">Código Ruta</label>
         <input type="text" id="f-codigo-ruta" placeholder="Ej. RT-014" />
       </div>
       <div class="supply-field">
-        <label>Fase de Alimentación</label>
-        <div class="phase-compare">
-          <div>
-            <label for="f-fase-sistema" style="font-weight:400;text-transform:none;font-size:9.5px;">Según sistema (si se conoce)</label>
-            <select id="f-fase-sistema">
-              <option value="">No disponible</option>
-              <option value="R">R</option><option value="S">S</option><option value="T">T</option>
-              <option value="RS">RS</option><option value="ST">ST</option><option value="RT">RT</option>
-              <option value="RST">RST</option>
-              <option value="RN">RN</option><option value="SN">SN</option><option value="TN">TN</option>
-              <option value="RSTN">RSTN</option>
-            </select>
-          </div>
-          <div>
-            <label for="f-fase-campo" style="font-weight:400;text-transform:none;font-size:9.5px;">Verificada en campo *</label>
-            <select id="f-fase-campo">
-              <option value="">Selecciona…</option>
-              <option value="R">R</option><option value="S">S</option><option value="T">T</option>
-              <option value="RS">RS</option><option value="ST">ST</option><option value="RT">RT</option>
-              <option value="RST">RST</option>
-              <option value="RN">RN</option><option value="SN">SN</option><option value="TN">TN</option>
-              <option value="RSTN">RSTN</option>
-            </select>
-          </div>
-        </div>
-        <div class="supply-field-hint">Si el dato del sistema no coincide con lo observado en campo, se guarda la fase verificada en campo como la correcta.</div>
-      </div>
-      <div class="supply-field">
-        <label for="f-etiqueta-sed">Etiqueta SED</label>
-        <input type="text" id="f-etiqueta-sed" placeholder="Ej. SE04732" />
+        <label for="f-fase-campo">Fase de Alimentación *</label>
+        <select id="f-fase-campo">
+          <option value="">Selecciona…</option>
+          <option value="R">R</option><option value="S">S</option><option value="T">T</option>
+          <option value="RS">RS</option><option value="ST">ST</option><option value="RT">RT</option>
+          <option value="RST">RST</option>
+          <option value="RN">RN</option><option value="SN">SN</option><option value="TN">TN</option>
+          <option value="RSTN">RSTN</option>
+        </select>
       </div>
       <div class="supply-field">
         <label for="f-medidor-serie">Medidor: Serie <span class="auto-badge hidden" id="serie-auto-badge">auto</span></label>
@@ -2539,11 +2514,8 @@ class SupplyWorkflowController {
     this.btnCloseForm = document.getElementById('btn-close-supply-form');
     this.btnFormContinue = document.getElementById('btn-supply-form-continue');
     this.formError = document.getElementById('supply-form-error');
-    this.fCodigoSuministro = document.getElementById('f-codigo-suministro');
     this.fCodigoRuta = document.getElementById('f-codigo-ruta');
-    this.fFaseSistema = document.getElementById('f-fase-sistema');
     this.fFaseCampo = document.getElementById('f-fase-campo');
-    this.fEtiquetaSed = document.getElementById('f-etiqueta-sed');
     this.fMedidorSerie = document.getElementById('f-medidor-serie');
     this.serieAutoBadge = document.getElementById('serie-auto-badge');
 
@@ -2641,35 +2613,19 @@ class SupplyWorkflowController {
   // --- Paso c: formulario -----------------------------------------
   _openForm(prefillFields) {
     const f = prefillFields || {};
-    const sed = window.__lastSubestacionContext || {};
-    const faseOptions = Array.from(this.fFaseCampo.options).map((o) => o.value);
 
-    this.fCodigoSuministro.value = f.codigoSuministro || '';
     this.fCodigoRuta.value = f.codigoRuta || '';
-
-    // "Fase (sistema)" se precarga con lo que trae la Subestación
-    // tocada más recientemente (dato de referencia, no obligatorio).
-    this.fFaseSistema.value = sed.fasesPrimario && faseOptions.includes(sed.fasesPrimario.toUpperCase())
-      ? sed.fasesPrimario.toUpperCase() : '';
-
-    // Solo se aplica la fase escaneada si coincide con una opción
-    // válida del selector; si no, queda vacía para completar a mano.
-    this.fFaseCampo.value = f.fase && faseOptions.includes(f.fase.toUpperCase()) ? f.fase.toUpperCase() : '';
-
-    // "Etiqueta SED" prioriza lo escaneado; si el código no trae ese
-    // dato, se usa la Etiqueta de Campo de la Subestación tocada.
-    this.fEtiquetaSed.value = f.etiquetaSed || sed.etiquetaCampo || '';
-
+    this.fFaseCampo.value = ''; // siempre a elegir manualmente
     this.fMedidorSerie.value = f.medidorSerie || '';
 
-    const anyAuto = Object.values(f).some(Boolean) || !!sed.etiquetaCampo || !!sed.fasesPrimario;
+    const anyAuto = !!f.medidorSerie;
     this.serieAutoBadge.classList.toggle('hidden', !anyAuto);
     this.formError.classList.remove('show');
     this.formModal.classList.add('show');
   }
 
   _onFormContinue() {
-    const required = [this.fCodigoSuministro, this.fCodigoRuta, this.fFaseCampo, this.fEtiquetaSed, this.fMedidorSerie];
+    const required = [this.fCodigoRuta, this.fFaseCampo, this.fMedidorSerie];
     const allFilled = required.every((el) => el.value.trim() !== '');
 
     if (!allFilled) {
@@ -2679,11 +2635,8 @@ class SupplyWorkflowController {
     this.formError.classList.remove('show');
 
     this.current.form = {
-      codigoSuministro: this.fCodigoSuministro.value.trim(),
       codigoRuta: this.fCodigoRuta.value.trim(),
-      faseSistema: this.fFaseSistema.value || null,
       faseCampo: this.fFaseCampo.value,
-      etiquetaSed: this.fEtiquetaSed.value.trim(),
       medidorSerie: this.fMedidorSerie.value.trim(),
     };
 
