@@ -770,7 +770,9 @@
         <h3>Código escaneado</h3>
         <button class="close-x" id="btn-close-scan-result">✕</button>
       </div>
-      <table id="scan-result-table"></table>
+      <p style="font-size:11px;color:var(--text-dim);margin:0 0 10px;">Verifica que coincida con el número impreso en el medidor. Si no coincide, corrígelo aquí antes de continuar.</p>
+      <input type="text" id="scan-result-input" inputmode="text" style="width:100%;background:#0e1116;border:1.5px solid var(--hivis);border-radius:9px;padding:12px;color:var(--text);font-family:var(--mono);font-size:15px;text-align:center;box-sizing:border-box;" />
+      <button id="btn-confirm-scan-result" style="width:100%;margin-top:12px;background:var(--hivis);color:#181c22;border:none;border-radius:9px;padding:12px 0;font-weight:700;font-size:13px;cursor:pointer;">Confirmar y continuar</button>
     </div>
   </div>
 
@@ -2396,6 +2398,7 @@ class BarcodeScanController {
     this.video = document.getElementById('scanner-video');
     this.btnCancel = document.getElementById('btn-scanner-cancel');
     this.btnManual = document.getElementById('btn-scanner-manual');
+    this.hintEl = document.getElementById('scanner-hint');
 
     this.stream = null;
     this.detector = null;
@@ -2413,6 +2416,9 @@ class BarcodeScanController {
   async open(onResult, onManual) {
     this._onResult = onResult;
     this._onManual = onManual;
+    this._lastValue = null;
+    this._lastValueStreak = 0;
+    if (this.hintEl) this.hintEl.textContent = 'Apunta al código de barras del medidor';
 
     if (!('BarcodeDetector' in window)) {
       this._toast('Este celular no soporta lectura automática. Ingresa el dato manualmente.');
@@ -2437,15 +2443,37 @@ class BarcodeScanController {
     }
   }
 
+  // Se requieren varias lecturas SEGUIDAS con el mismo resultado
+  // antes de aceptarlo — un solo cuadro borroso o con movimiento
+  // puede leer mal un dígito, pero es muy raro que el mismo error
+  // se repita igual varias veces consecutivas.
+  static CONFIRM_READS = 3;
+
   async _scanLoop() {
     if (!this.scanning) return;
     try {
       const codes = await this.detector.detect(this.video);
       if (codes && codes.length) {
         const value = codes[0].rawValue;
-        this._close();
-        if (typeof this._onResult === 'function') this._onResult(value);
-        return;
+
+        if (value === this._lastValue) {
+          this._lastValueStreak++;
+        } else {
+          this._lastValue = value;
+          this._lastValueStreak = 1;
+        }
+
+        if (this.hintEl) {
+          this.hintEl.textContent = this._lastValueStreak < BarcodeScanController.CONFIRM_READS
+            ? `Verificando lectura… (${this._lastValueStreak}/${BarcodeScanController.CONFIRM_READS})`
+            : 'Confirmado ✓';
+        }
+
+        if (this._lastValueStreak >= BarcodeScanController.CONFIRM_READS) {
+          this._close();
+          if (typeof this._onResult === 'function') this._onResult(value);
+          return;
+        }
       }
     } catch (err) {
       // frame no válido para detectar todavía, se reintenta
@@ -2502,8 +2530,9 @@ class SupplyWorkflowController {
 
     // Resultado del escaneo
     this.scanResultModal = document.getElementById('scan-result-modal');
-    this.scanResultTable = document.getElementById('scan-result-table');
+    this.scanResultInput = document.getElementById('scan-result-input');
     this.btnCloseScanResult = document.getElementById('btn-close-scan-result');
+    this.btnConfirmScanResult = document.getElementById('btn-confirm-scan-result');
 
     // Paso c: formulario
     this.formModal = document.getElementById('supply-form-modal');
@@ -2550,7 +2579,13 @@ class SupplyWorkflowController {
 
     this.btnCloseScanResult.addEventListener('click', () => {
       this.scanResultModal.classList.remove('show');
-      this._openForm({ medidorSerie: this.current.scannedValue });
+      this.scanPromptBanner.classList.add('show'); // vuelve a ofrecer escanear o ingresar manualmente
+    });
+
+    this.btnConfirmScanResult.addEventListener('click', () => {
+      const finalValue = this.scanResultInput.value.trim();
+      this.scanResultModal.classList.remove('show');
+      this._openForm({ medidorSerie: finalValue });
     });
 
     this.btnCloseForm.addEventListener('click', () => {
@@ -2592,24 +2627,15 @@ class SupplyWorkflowController {
     // parte del dato real — se quita antes de usarlo.
     const cleaned = this._stripAimPrefix(rawValue);
     this.current.scannedValue = cleaned;
-    this._renderScanResultTable(cleaned);
+    this.scanResultInput.value = cleaned;
     this.scanResultModal.classList.add('show');
+    // Foco con el texto seleccionado: si el dato está mal, el
+    // técnico puede corregirlo de inmediato sin borrar a mano.
+    setTimeout(() => { this.scanResultInput.focus(); this.scanResultInput.select(); }, 50);
   }
 
   _stripAimPrefix(value) {
     return value.replace(/^\][A-Za-z]\d/, '').trim();
-  }
-
-  _renderScanResultTable(rawValue) {
-    // Se muestra el contenido TAL COMO fue leído del código de
-    // barras, sin intentar adivinar a qué campo corresponde cada
-    // parte (eso evita errores de interpretación). El técnico revisa
-    // este dato y luego continúa al formulario.
-    const parts = rawValue.split(/[\n;|]/).map((p) => p.trim()).filter(Boolean);
-    const rowsHtml = parts.length > 1
-      ? parts.map((p) => `<tr><td>${this._escape(p)}</td></tr>`).join('')
-      : `<tr><td>${this._escape(rawValue)}</td></tr>`;
-    this.scanResultTable.innerHTML = rowsHtml;
   }
 
   // --- Paso c: formulario -----------------------------------------
