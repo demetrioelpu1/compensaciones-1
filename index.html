@@ -294,8 +294,13 @@
     white-space:pre-wrap; word-break:break-all; max-height:240px; overflow-y:auto;
     background:#0e1116; border-radius:8px; padding:10px;
   }
+  .sel-file-work{
+    width:100%; margin-top:10px; background:var(--hivis); border:none;
+    color:#181c22; border-radius:8px; padding:9px 0; font-size:11.5px; font-weight:700;
+    cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;
+  }
   .sel-file-delete{
-    width:100%; margin-top:10px; background:transparent; border:1px solid rgba(228,87,46,.35);
+    width:100%; margin-top:8px; background:transparent; border:1px solid rgba(228,87,46,.35);
     color:var(--danger); border-radius:8px; padding:8px 0; font-size:11px; font-weight:600;
     cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;
   }
@@ -530,6 +535,67 @@
   }
   #supply-counter.show{ display:block; }
   #supply-counter b{ color:var(--hivis); }
+
+  /* Badge de sesión de trabajo SEL: reemplaza al contador simple
+     mientras hay un archivo .sel activo, mostrando el avance en vivo */
+  #sel-session-badge{
+    display:none;
+    position:absolute; left:14px; bottom:74px;
+    background:var(--bar-bg-2); border:1.5px solid var(--hivis); border-radius:9px;
+    padding:8px 11px; z-index:900; cursor:pointer;
+    max-width:220px;
+  }
+  #sel-session-badge.show{ display:block; }
+  #sel-session-badge .ssb-file{
+    font-family:var(--mono); font-size:11px; font-weight:700; color:var(--hivis);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  #sel-session-badge .ssb-status{
+    font-size:9.5px; color:var(--text-dim); margin-top:2px;
+  }
+  #sel-session-badge .ssb-status b{ color:var(--text); }
+  #sel-session-badge .ssb-tap{ opacity:.7; }
+
+  /* Modal: tabla de seguimiento completa del archivo SEL en trabajo */
+  #sel-tracker-modal{
+    display:none;
+    position:fixed; inset:0; z-index:2050;
+    background:rgba(0,0,0,.65); align-items:flex-end; justify-content:center;
+  }
+  #sel-tracker-modal.show{ display:flex; }
+  #sel-tracker-card{
+    background:var(--bar-bg); border-top:1px solid var(--line);
+    border-radius:16px 16px 0 0; width:100%; max-width:480px;
+    max-height:80vh; overflow-y:auto; padding:16px;
+  }
+  #sel-tracker-card .head{
+    display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;
+  }
+  #sel-tracker-card .head h3{ font-size:13px; margin:0; color:var(--text); font-family:var(--mono); }
+  #tracker-table-wrap table{
+    width:100%; border-collapse:collapse; font-size:11px; margin-bottom:14px;
+  }
+  #tracker-table-wrap th{
+    text-align:left; font-size:9.5px; color:var(--text-dim); text-transform:uppercase;
+    padding:5px 6px; border-bottom:1px solid var(--line);
+  }
+  #tracker-table-wrap td{
+    padding:6px; border-bottom:1px solid var(--line); color:var(--text);
+    font-family:var(--mono); font-size:10.5px;
+  }
+  #tracker-table-wrap tr.group-header td{
+    background:rgba(242,183,5,.08); font-weight:700; color:var(--hivis);
+  }
+  #tracker-table-wrap tr.active-group td{ background:rgba(46,139,87,.08); }
+  #tracker-table-wrap .tipo-1{ color:var(--danger); font-weight:700; }
+  #tracker-table-wrap .tipo-0{ color:#4FA3E3; font-weight:700; }
+  .tracker-actions{ display:flex; gap:8px; }
+  .tracker-actions button{
+    flex:1; border:none; border-radius:9px; padding:12px 0;
+    font-weight:700; font-size:12px; cursor:pointer;
+  }
+  #btn-next-group{ background:#181c22; color:var(--text); border:1px solid var(--line) !important; }
+  #btn-finish-sel-session{ background:var(--ok); color:#fff; }
 
   /* Barra de dibujo de acometida */
   #draw-toolbar{
@@ -835,10 +901,30 @@
 
     <div id="supply-counter"><b id="supply-counter-value">0</b> suministros registrados</div>
 
+    <div id="sel-session-badge">
+      <div class="ssb-file" id="ssb-file">—</div>
+      <div class="ssb-status">Ítem <b id="ssb-item">1</b>/<span id="ssb-total-items">1</span> · <span id="ssb-series-count">0</span> series · <span class="ssb-tap">toca para ver</span></div>
+    </div>
+
     <button id="btn-new-supply">
       <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
       <span>Nuevo suministro</span>
     </button>
+
+    <!-- Tabla de seguimiento en vivo del archivo SEL en trabajo -->
+    <div id="sel-tracker-modal">
+      <div id="sel-tracker-card">
+        <div class="head">
+          <h3 id="tracker-file-title">Archivo</h3>
+          <button class="close-x" id="btn-close-tracker">✕</button>
+        </div>
+        <div id="tracker-table-wrap"></div>
+        <div class="tracker-actions">
+          <button id="btn-next-group">Siguiente ítem →</button>
+          <button id="btn-finish-sel-session">Finalizar trabajo</button>
+        </div>
+      </div>
+    </div>
 
     <div id="draw-toolbar">
       <div class="hint"><span class="dot-red"></span><span>Toca el mapa para marcar la acometida: desde la red BT hasta el medidor</span></div>
@@ -2917,6 +3003,12 @@ class SupplyWorkflowController {
       this._refreshCounter();
       this._toast(`Suministro guardado (${this.savedCount}). Listo para el siguiente.`);
 
+      // Si hay una sesión de trabajo de archivo .sel activa, la serie
+      // recién registrada se suma automáticamente al ítem en curso.
+      if (window.__selWorkSessionController) {
+        window.__selWorkSessionController.addSerie(this.current.form.medidorSerie);
+      }
+
       this.photoModal.classList.remove('show');
       this._startNewSupply(); // vuelve directo al paso "a" para el siguiente usuario
     } catch (err) {
@@ -3049,6 +3141,10 @@ class SelFilesController {
         </div>
         <div class="sel-file-content">
           <pre>${this._escape(this._filterContent(f.content))}</pre>
+          <button class="sel-file-work" data-filename="${this._escape(f.fileName)}">
+            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Trabajar con este archivo
+          </button>
           <button class="sel-file-delete" data-filename="${this._escape(f.fileName)}">
             <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/></svg>
             Eliminar este archivo
@@ -3060,12 +3156,31 @@ class SelFilesController {
         if (item.classList.contains('open')) this.openNames.add(f.fileName);
         else this.openNames.delete(f.fileName);
       });
+      item.querySelector('.sel-file-work').addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (typeof this.onWorkWithFile === 'function') this.onWorkWithFile(f.fileName, f.content);
+      });
       item.querySelector('.sel-file-delete').addEventListener('click', (e) => {
         e.stopPropagation(); // no vuelve a colapsar el contenido al tocar el botón
         this._handleDeleteFile(f.fileName);
       });
       this.listEl.appendChild(item);
     });
+  }
+
+  /**
+   * Convierte el contenido crudo del archivo en grupos de trabajo:
+   * cada línea es un grupo con su código SEL y su indicador de
+   * Sobretensión(1)/Subtensión(0).
+   */
+  parseGroups(content) {
+    return content
+      .split('\n')
+      .map((line) => {
+        const parts = line.trim().split(/\s+/);
+        return parts.length >= 2 ? { selCode: parts[0], tipo: parts[1], series: [] } : null;
+      })
+      .filter(Boolean);
   }
 
   /**
@@ -3089,6 +3204,144 @@ class SelFilesController {
   }
 }
 
+// ---------------------------------------------------------------
+// SelWorkSessionController: gestiona la sesión de trabajo activa
+// sobre UN archivo .sel — sus grupos (código SEL + Sobretensión/
+// Subtensión) y la lista de series de medidor que se va llenando
+// sola a medida que se registran suministros. Muestra el avance en
+// el badge (en vez del contador simple) y en una tabla completa.
+// ---------------------------------------------------------------
+class SelWorkSessionController {
+  constructor() {
+    this.fileName = null;
+    this.groups = []; // [{ selCode, tipo, series: [] }]
+    this.activeGroupIndex = 0;
+
+    this.counterEl = document.getElementById('supply-counter');
+    this.badge = document.getElementById('sel-session-badge');
+    this.badgeFile = document.getElementById('ssb-file');
+    this.badgeItem = document.getElementById('ssb-item');
+    this.badgeTotalItems = document.getElementById('ssb-total-items');
+    this.badgeSeriesCount = document.getElementById('ssb-series-count');
+
+    this.modal = document.getElementById('sel-tracker-modal');
+    this.trackerTitle = document.getElementById('tracker-file-title');
+    this.tableWrap = document.getElementById('tracker-table-wrap');
+    this.btnClose = document.getElementById('btn-close-tracker');
+    this.btnNextGroup = document.getElementById('btn-next-group');
+    this.btnFinish = document.getElementById('btn-finish-sel-session');
+
+    this.onFinished = null; // callback() — quien orqueste puede reabrir el menú SEL
+
+    this.badge.addEventListener('click', () => this._openTracker());
+    this.btnClose.addEventListener('click', () => this.modal.classList.remove('show'));
+    this.btnNextGroup.addEventListener('click', () => this._advanceGroup());
+    this.btnFinish.addEventListener('click', () => this._finish());
+
+    this._updateBadge();
+  }
+
+  isActive() {
+    return this.groups.length > 0;
+  }
+
+  start(fileName, groups) {
+    this.fileName = fileName;
+    this.groups = groups;
+    this.activeGroupIndex = 0;
+    this._updateBadge();
+    this._toast(`Trabajando con ${fileName} · Ítem 1 de ${groups.length}`);
+  }
+
+  /** Se llama automáticamente cada vez que se guarda un suministro. */
+  addSerie(serie) {
+    if (!this.isActive() || !serie) return;
+    const group = this.groups[this.activeGroupIndex];
+    if (group) group.series.push(serie);
+    this._updateBadge();
+  }
+
+  _advanceGroup() {
+    if (this.activeGroupIndex < this.groups.length - 1) {
+      this.activeGroupIndex++;
+      this._updateBadge();
+      this._renderTracker();
+      this._toast(`Ítem ${this.activeGroupIndex + 1} de ${this.groups.length}`);
+    } else {
+      this._toast('Ya estás en el último ítem de este archivo.');
+    }
+  }
+
+  _finish() {
+    if (!window.confirm('¿Culminaste con el trabajo de este archivo?')) return;
+    this.modal.classList.remove('show');
+    this.fileName = null;
+    this.groups = [];
+    this.activeGroupIndex = 0;
+    this._updateBadge();
+    if (typeof this.onFinished === 'function') this.onFinished();
+  }
+
+  _openTracker() {
+    this._renderTracker();
+    this.modal.classList.add('show');
+  }
+
+  _updateBadge() {
+    const active = this.isActive();
+    this.badge.classList.toggle('show', active);
+    this.counterEl.classList.toggle('show', !active && Number(document.getElementById('supply-counter-value').textContent) > 0);
+
+    if (!active) return;
+
+    this.badgeFile.textContent = this.fileName;
+    this.badgeItem.textContent = this.activeGroupIndex + 1;
+    this.badgeTotalItems.textContent = this.groups.length;
+    this.badgeSeriesCount.textContent = this.groups[this.activeGroupIndex]?.series.length || 0;
+  }
+
+  _renderTracker() {
+    this.trackerTitle.textContent = this.fileName || '—';
+
+    let rowsHtml = '';
+    this.groups.forEach((g, gi) => {
+      const isActiveGroup = gi === this.activeGroupIndex;
+      rowsHtml += `<tr class="group-header${isActiveGroup ? ' active-group' : ''}">
+        <td colspan="3">${this._escape(g.selCode)} <span class="tipo-${g.tipo}">${g.tipo === '1' ? 'Sobretensión' : 'Subtensión'}</span></td>
+      </tr>`;
+      if (!g.series.length) {
+        rowsHtml += `<tr><td>—</td><td colspan="2" style="color:var(--text-dim);">Sin series registradas todavía</td></tr>`;
+      } else {
+        g.series.forEach((serie, si) => {
+          rowsHtml += `<tr><td>${si + 1}</td><td colspan="2">${this._escape(serie)}</td></tr>`;
+        });
+      }
+    });
+
+    this.tableWrap.innerHTML = `
+      <table>
+        <thead><tr><th>Ítem</th><th colspan="2">Serie / Grupo</th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    `;
+  }
+
+  _escape(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  _toast(msg) {
+    const el = document.getElementById('toast');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+  }
+}
+
 class AppController {
   constructor() {
     this.mapService = new MapService('map');
@@ -3109,6 +3362,26 @@ class AppController {
     this.selFilePersistenceService = new SelFilePersistenceService();
     this.selFilesController = new SelFilesController(this.selFilePersistenceService);
     this.pendingShareController = new PendingShareController(this.gisLayerService, this.assignmentBanner, this.selFilesController);
+
+    // Sesión de trabajo sobre un archivo .sel: el botón "Trabajar con
+    // este archivo" arma los grupos y comienza; al terminar, se
+    // reabre el menú de archivos SEL para elegir el siguiente.
+    this.selWorkSessionController = new SelWorkSessionController();
+    window.__selWorkSessionController = this.selWorkSessionController; // acceso desde SupplyWorkflowController
+
+    this.selFilesController.onWorkWithFile = (fileName, content) => {
+      const groups = this.selFilesController.parseGroups(content);
+      if (!groups.length) {
+        alert('Este archivo no tiene datos reconocibles para trabajar.');
+        return;
+      }
+      this.selWorkSessionController.start(fileName, groups);
+      this.selFilesController._togglePanel(false);
+    };
+
+    this.selWorkSessionController.onFinished = () => {
+      this.selFilesController._togglePanel(true);
+    };
   }
 
   async start() {
