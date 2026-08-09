@@ -3010,7 +3010,7 @@ class SelFilesController {
           <span class="name">${this._escape(f.fileName)}</span>
           <svg class="chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
         </div>
-        <div class="sel-file-content"><pre>${this._escape(f.content)}</pre></div>
+        <div class="sel-file-content"><pre>${this._escape(this._filterContent(f.content))}</pre></div>
       `;
       item.querySelector('.sel-file-header').addEventListener('click', () => {
         item.classList.toggle('open');
@@ -3019,6 +3019,20 @@ class SelFilesController {
       });
       this.listEl.appendChild(item);
     });
+  }
+
+  /**
+   * Cada línea trae 3 valores separados por espacio (ej: "10010107612
+   * 1 0"). Solo se muestran los dos primeros, se quita el tercero.
+   */
+  _filterContent(content) {
+    return content
+      .split('\n')
+      .map((line) => {
+        const parts = line.trim().split(/\s+/);
+        return parts.length === 3 ? `${parts[0]} ${parts[1]}` : line;
+      })
+      .join('\n');
   }
 
   _escape(str) {
