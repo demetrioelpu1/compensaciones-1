@@ -240,6 +240,62 @@
   }
   #layers-panel.open{ transform:translateX(0); }
 
+  /* Botón flotante y panel de archivos SEL (mismo patrón visual que
+     el panel de capas de la red) */
+  #btn-sel-files{
+    position:absolute; right:14px; bottom:258px;
+    width:48px; height:48px; border-radius:12px;
+    background:var(--bar-bg-2); border:1px solid var(--line);
+    color:var(--text); display:flex; align-items:center; justify-content:center;
+    cursor:pointer; z-index:900;
+    box-shadow:0 4px 14px rgba(0,0,0,.4);
+  }
+  #btn-sel-files:active{ background:#282e38; }
+  #btn-sel-files svg{ width:22px; height:22px; stroke:var(--text); fill:none; stroke-width:2; }
+  #btn-sel-files.active{ background:var(--hivis); border-color:var(--hivis); }
+  #btn-sel-files.active svg{ stroke:#181c22; }
+
+  #sel-panel{
+    position:absolute; top:0; right:0; bottom:0;
+    width:320px; max-width:88vw;
+    background:var(--bar-bg);
+    border-left:1px solid var(--line);
+    z-index:960;
+    transform:translateX(100%);
+    transition:transform .25s ease;
+    display:flex; flex-direction:column;
+    box-shadow:-8px 0 24px rgba(0,0,0,.35);
+  }
+  #sel-panel.open{ transform:translateX(0); }
+
+  .sel-file-item{
+    background:var(--bar-bg-2); border:1px solid var(--line); border-radius:10px;
+    margin-bottom:8px; overflow:hidden;
+  }
+  .sel-file-header{
+    display:flex; align-items:center; gap:8px; padding:11px 12px; cursor:pointer;
+  }
+  .sel-file-header svg{ width:15px; height:15px; stroke:var(--hivis); fill:none; stroke-width:2; flex-shrink:0; }
+  .sel-file-header .name{
+    flex:1; font-size:12px; font-weight:600; color:var(--text);
+    font-family:var(--mono); word-break:break-all;
+  }
+  .sel-file-header .chevron{
+    width:14px; height:14px; stroke:var(--text-dim); fill:none; stroke-width:2;
+    transition:transform .2s; flex-shrink:0;
+  }
+  .sel-file-item.open .chevron{ transform:rotate(180deg); }
+  .sel-file-content{
+    display:none; padding:0 12px 12px; border-top:1px solid var(--line);
+  }
+  .sel-file-item.open .sel-file-content{ display:block; }
+  .sel-file-content pre{
+    margin:10px 0 0; font-family:var(--mono); font-size:10.5px; color:var(--text-dim);
+    white-space:pre-wrap; word-break:break-all; max-height:240px; overflow-y:auto;
+    background:#0e1116; border-radius:8px; padding:10px;
+  }
+  .sel-files-empty{ color:var(--text-dim); font-size:11.5px; text-align:center; padding:20px 0; }
+
   .layers-panel-header{
     padding:14px 16px 10px;
     border-bottom:1px solid var(--line);
@@ -711,6 +767,24 @@
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 010 20 15 15 0 010-20z"/></svg>
       <span class="basemap-label" id="basemap-label">SAT</span>
     </button>
+
+    <button id="btn-sel-files" title="Archivos SEL">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      <span class="badge hidden" id="sel-files-badge">0</span>
+    </button>
+
+    <aside id="sel-panel">
+      <div class="layers-panel-header">
+        <h2>Archivos SEL</h2>
+        <button class="close-btn" id="btn-close-sel-panel">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="layers-panel-body" id="sel-files-list"></div>
+      <div class="layers-panel-footer">
+        <p>Comparte cada archivo .sel desde WhatsApp hacia esta app (botón Compartir → CMP), uno por uno. Aparecerán aquí como un menú — toca el nombre para ver u ocultar su contenido.</p>
+      </div>
+    </aside>
 
     <aside id="layers-panel">
       <div class="layers-panel-header">
@@ -1251,6 +1325,74 @@ class CategoryAssignmentBanner {
 // app como una sesión nueva (memoria en blanco) — sin esta
 // persistencia, cada archivo compartido borraría lo cargado antes.
 // ---------------------------------------------------------------
+// ---------------------------------------------------------------
+// SelFilePersistenceService: guarda el contenido de cada archivo
+// .sel recibido por WhatsApp en IndexedDB. La clave es el propio
+// nombre del archivo, así si se vuelve a compartir uno con el mismo
+// nombre, se actualiza en vez de duplicarse.
+// ---------------------------------------------------------------
+class SelFilePersistenceService {
+  constructor() {
+    this.dbName = 'cmp-sel-files-db';
+    this.storeName = 'sel-files';
+    this.dbPromise = this._openDB();
+  }
+
+  _openDB() {
+    return new Promise((resolve, reject) => {
+      if (!('indexedDB' in window)) {
+        reject(new Error('IndexedDB no disponible en este navegador.'));
+        return;
+      }
+      const request = indexedDB.open(this.dbName, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(this.storeName)) {
+          db.createObjectStore(this.storeName, { keyPath: 'fileName' });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async saveFile(fileName, content) {
+    const db = await this.dbPromise;
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(this.storeName, 'readwrite');
+      tx.objectStore(this.storeName).put({ fileName, content, savedAt: new Date().toISOString() });
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async getAll() {
+    try {
+      const db = await this.dbPromise;
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction(this.storeName, 'readonly');
+        const req = tx.objectStore(this.storeName).getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error);
+      });
+    } catch (err) {
+      return [];
+    }
+  }
+
+  async clearAll() {
+    try {
+      const db = await this.dbPromise;
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction(this.storeName, 'readwrite');
+        tx.objectStore(this.storeName).clear();
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+    } catch (err) { /* silencioso */ }
+  }
+}
+
 class NetworkPersistenceService {
   constructor() {
     this.dbName = 'cmp-catastro-db';
@@ -2115,9 +2257,10 @@ class LayerPanelController {
 // a qué capa asignar el archivo recibido.
 // ---------------------------------------------------------------
 class PendingShareController {
-  constructor(gisLayerService, assignmentBanner) {
+  constructor(gisLayerService, assignmentBanner, selFilesController) {
     this.gisLayerService = gisLayerService;
     this.assignmentBanner = assignmentBanner;
+    this.selFilesController = selFilesController;
     this.toastEl = document.getElementById('toast');
   }
 
@@ -2155,6 +2298,16 @@ class PendingShareController {
 
       // Limpieza inmediata: ya leímos el archivo, no lo dejamos en cache
       await Promise.all((await cache.keys()).map((req) => cache.delete(req)));
+
+      // Los archivos .sel/.txt van al menú de archivos SEL, no al
+      // flujo de clasificación de capas GIS (KMZ/KML/SHP).
+      const ext = file.name.split('.').pop().toLowerCase();
+      if (ext === 'sel' || ext === 'txt') {
+        const text = await file.text();
+        await this.selFilesController.addFile(file.name, text);
+        this._toast(`Archivo agregado: ${file.name}`);
+        return;
+      }
 
       let categoryId = classifyGisFilename(file.name);
       if (!categoryId) {
@@ -2799,6 +2952,82 @@ class SupplyWorkflowController {
   }
 }
 
+// ---------------------------------------------------------------
+// SelFilesController: arma el menú de archivos .sel recibidos por
+// WhatsApp, con cada uno desplegable/ocultable para ver su
+// contenido. No sabe nada de KMZ ni del resto de la app.
+// ---------------------------------------------------------------
+class SelFilesController {
+  constructor(persistenceService) {
+    this.persistenceService = persistenceService;
+
+    this.panel = document.getElementById('sel-panel');
+    this.btnToggle = document.getElementById('btn-sel-files');
+    this.btnClose = document.getElementById('btn-close-sel-panel');
+    this.listEl = document.getElementById('sel-files-list');
+    this.badge = document.getElementById('sel-files-badge');
+    this.openNames = new Set(); // qué archivos están desplegados, para no colapsarlos al re-renderizar
+
+    this.btnToggle.addEventListener('click', () => this._togglePanel());
+    this.btnClose.addEventListener('click', () => this._togglePanel(false));
+
+    this._renderFromStorage();
+  }
+
+  async addFile(fileName, content) {
+    await this.persistenceService.saveFile(fileName, content);
+    this.openNames.add(fileName); // el recién llegado se muestra abierto
+    await this._renderFromStorage();
+    this._togglePanel(true);
+  }
+
+  _togglePanel(force) {
+    const willOpen = force !== undefined ? force : !this.panel.classList.contains('open');
+    this.panel.classList.toggle('open', willOpen);
+    this.btnToggle.classList.toggle('active', willOpen);
+  }
+
+  async _renderFromStorage() {
+    const files = await this.persistenceService.getAll();
+    files.sort((a, b) => a.fileName.localeCompare(b.fileName));
+
+    this.badge.textContent = files.length;
+    this.badge.classList.toggle('hidden', files.length === 0);
+
+    if (!files.length) {
+      this.listEl.innerHTML = '<div class="sel-files-empty">Aún no se ha recibido ningún archivo .sel</div>';
+      return;
+    }
+
+    this.listEl.innerHTML = '';
+    files.forEach((f) => {
+      const isOpen = this.openNames.has(f.fileName);
+      const item = document.createElement('div');
+      item.className = 'sel-file-item' + (isOpen ? ' open' : '');
+      item.innerHTML = `
+        <div class="sel-file-header">
+          <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span class="name">${this._escape(f.fileName)}</span>
+          <svg class="chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="sel-file-content"><pre>${this._escape(f.content)}</pre></div>
+      `;
+      item.querySelector('.sel-file-header').addEventListener('click', () => {
+        item.classList.toggle('open');
+        if (item.classList.contains('open')) this.openNames.add(f.fileName);
+        else this.openNames.delete(f.fileName);
+      });
+      this.listEl.appendChild(item);
+    });
+  }
+
+  _escape(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+}
+
 class AppController {
   constructor() {
     this.mapService = new MapService('map');
@@ -2816,7 +3045,9 @@ class AppController {
     this.gisLayerService = new GISLayerService(this.mapService.getMap(), this.layerLoaderService, this.persistenceService);
     this.assignmentBanner = new CategoryAssignmentBanner();
     this.layerPanelController = new LayerPanelController(this.gisLayerService, this.assignmentBanner);
-    this.pendingShareController = new PendingShareController(this.gisLayerService, this.assignmentBanner);
+    this.selFilePersistenceService = new SelFilePersistenceService();
+    this.selFilesController = new SelFilesController(this.selFilePersistenceService);
+    this.pendingShareController = new PendingShareController(this.gisLayerService, this.assignmentBanner, this.selFilesController);
   }
 
   async start() {

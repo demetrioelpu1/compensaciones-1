@@ -24,11 +24,12 @@
         {
           "name": "gis_files",
           "accept": [
-            ".kmz", ".kml", ".zip", ".geojson", ".json",
+            ".kmz", ".kml", ".zip", ".geojson", ".json", ".sel", ".txt",
             "application/vnd.google-earth.kmz",
             "application/vnd.google-earth.kml+xml",
             "application/zip",
-            "application/octet-stream"
+            "application/octet-stream",
+            "text/plain"
           ]
         }
       ]
