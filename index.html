@@ -972,7 +972,7 @@
     <div id="sel-finish-modal">
       <div id="sel-finish-card">
         <h3>¿Culminaste con el trabajo de este archivo?</h3>
-        <button id="btn-finish-download">📊 Descargar en Excel</button>
+        <button id="btn-finish-download">📊 Descargar Excel + fotos</button>
         <button id="btn-finish-continue">➡ Continuar con otro archivo</button>
         <button id="btn-finish-cancel">Cancelar</button>
       </div>
@@ -3066,7 +3066,7 @@ class SupplyWorkflowController {
     }
 
     try {
-      await this.persistenceService.saveSupply({
+      const newSupplyId = await this.persistenceService.saveSupply({
         lineGeoJSON: this.current.lineGeoJSON,
         scannedValue: this.current.scannedValue,
         form: this.current.form,
@@ -3083,7 +3083,7 @@ class SupplyWorkflowController {
       // Si hay una sesión de trabajo de archivo .sel activa, la serie
       // recién registrada se suma automáticamente al ítem en curso.
       if (window.__selWorkSessionController) {
-        window.__selWorkSessionController.addSerie(this.current.form.medidorSerie, this.current.lineGeoJSON);
+        window.__selWorkSessionController.addSerie(this.current.form.medidorSerie, this.current.lineGeoJSON, newSupplyId);
       }
 
       // La línea dibujada queda con sus propios datos adosados (como
@@ -3461,12 +3461,13 @@ class SelWorkSessionPersistenceService {
 }
 
 class SelWorkSessionController {
-  constructor(persistenceService, mapService) {
+  constructor(persistenceService, mapService, supplyPersistenceService) {
     this.persistenceService = persistenceService;
+    this.supplyPersistenceService = supplyPersistenceService; // para leer las fotos de cada suministro al exportar
     this.map = mapService.getMap();
     this.highlightLayer = L.layerGroup().addTo(this.map); // solo para resaltar en verde, no toca las líneas permanentes
     this.fileName = null;
-    this.groups = []; // [{ selCode, tipo, series: [{ value, line }] }]
+    this.groups = []; // [{ selCode, tipo, series: [{ value, line, supplyId }] }]
     this.activeGroupIndex = 0;
 
     this.counterEl = document.getElementById('supply-counter');
@@ -3497,7 +3498,7 @@ class SelWorkSessionController {
     this.btnFinish.addEventListener('click', () => this._finish());
     this.btnSaveNow.addEventListener('click', () => this._persist(true));
 
-    this.btnFinishDownload.addEventListener('click', () => { this._exportToCSV(); this._doFinish(); });
+    this.btnFinishDownload.addEventListener('click', async () => { await this._exportPackage(); this._doFinish(); });
     this.btnFinishContinue.addEventListener('click', () => this._doFinish());
     this.btnFinishCancel.addEventListener('click', () => this.finishModal.classList.remove('show'));
 
@@ -3531,10 +3532,10 @@ class SelWorkSessionController {
   }
 
   /** Se llama automáticamente cada vez que se guarda un suministro. */
-  addSerie(serie, lineGeoJSON) {
+  addSerie(serie, lineGeoJSON, supplyId) {
     if (!this.isActive() || !serie) return;
     const group = this.groups[this.activeGroupIndex];
-    if (group) group.series.push({ value: serie, line: lineGeoJSON || null });
+    if (group) group.series.push({ value: serie, line: lineGeoJSON || null, supplyId: supplyId ?? null });
     this._updateBadge();
     this._persist();
   }
@@ -3616,27 +3617,60 @@ class SelWorkSessionController {
   }
 
   /** Descarga un CSV (se abre directamente en Excel) con todo lo trabajado en este archivo. */
-  _exportToCSV() {
-    const rows = [['SEL', 'Tipo', 'Item', 'Serie']];
-    this.groups.forEach((g) => {
+  /**
+   * Descarga un único archivo ZIP con: el CSV de datos, y una
+   * carpeta por cada serie registrada con sus 3 fotos adentro. Listo
+   * para arrastrar directo a la carpeta de Google Drive de la
+   * campaña (subida manual, ya que la app no tiene permiso
+   * automático sobre tu cuenta de Google).
+   */
+  async _exportPackage() {
+    this._toast('Preparando descarga con fotos, un momento…');
+
+    const rows = [['SEL', 'Tipo', 'Item', 'Serie', 'Carpeta de fotos']];
+    const zip = new JSZip();
+    const allSupplies = this.supplyPersistenceService ? await this.supplyPersistenceService.getAll() : [];
+
+    for (const g of this.groups) {
       const tipoLabel = g.tipo === '1' ? 'Sobretensión (1)' : 'Subtensión (0)';
+
       if (!g.series.length) {
-        rows.push([g.selCode, tipoLabel, '', '']);
-      } else {
-        g.series.forEach((s, i) => rows.push([g.selCode, tipoLabel, i + 1, this._serieValue(s)]));
+        rows.push([g.selCode, tipoLabel, '', '', '']);
+        continue;
       }
-    });
+
+      for (let i = 0; i < g.series.length; i++) {
+        const entry = g.series[i];
+        const value = this._serieValue(entry);
+        const supplyId = typeof entry === 'object' ? entry.supplyId : null;
+        const folderName = `${g.selCode}_serie_${value}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+        const supply = supplyId != null ? allSupplies.find((s) => s.id === supplyId) : null;
+        if (supply && supply.photos && supply.photos.length) {
+          const folder = zip.folder(folderName);
+          supply.photos.forEach((blob, p) => {
+            if (blob) folder.file(`foto_${p + 1}.jpg`, blob);
+          });
+        }
+
+        rows.push([g.selCode, tipoLabel, i + 1, value, folderName + '/']);
+      }
+    }
 
     const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
-    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
+    zip.file(`${(this.fileName || 'archivo').replace('.sel', '')}.csv`, '\ufeff' + csv);
+
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(zipBlob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${(this.fileName || 'archivo').replace('.sel', '')}.csv`;
+    a.download = `${(this.fileName || 'archivo').replace('.sel', '')}_CAMPANA.zip`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+
+    this._toast('✓ Descarga lista: CSV + carpetas de fotos. Arrastra el ZIP extraído a tu carpeta de Drive.');
   }
 
   _openTracker() {
@@ -3791,7 +3825,7 @@ class AppController {
     // este archivo" arma los grupos y comienza; al terminar, se
     // reabre el menú de archivos SEL para elegir el siguiente.
     this.selWorkSessionPersistenceService = new SelWorkSessionPersistenceService();
-    this.selWorkSessionController = new SelWorkSessionController(this.selWorkSessionPersistenceService, this.mapService);
+    this.selWorkSessionController = new SelWorkSessionController(this.selWorkSessionPersistenceService, this.mapService, this.supplyPersistenceService);
     window.__selWorkSessionController = this.selWorkSessionController; // acceso desde SupplyWorkflowController
     this.selFilesController.workSessionPersistenceService = this.selWorkSessionPersistenceService; // para pintar los archivos ya trabajados
 
