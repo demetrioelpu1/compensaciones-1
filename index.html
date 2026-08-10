@@ -3483,18 +3483,29 @@ class SelWorkSessionController {
   }
 
   /** Resalta en verde, sobre el mapa, la línea de acometida asociada a esta serie. */
+  /** Compatibilidad: series guardadas antes de esta actualización son
+   *  texto plano ("123456"); las nuevas son objetos {value, line}. */
+  _serieValue(serie) {
+    return typeof serie === 'string' ? serie : (serie && serie.value) || '';
+  }
+
+  _serieLine(serie) {
+    return typeof serie === 'string' ? null : (serie && serie.line) || null;
+  }
+
   _highlightLineForSerie(gi, si) {
     const entry = this.groups[gi]?.series[si];
+    const line = this._serieLine(entry);
     this.highlightLayer.clearLayers();
 
-    if (!entry || !entry.line) {
+    if (!line) {
       this._toast('Esta serie no tiene una línea de acometida asociada.');
       return;
     }
 
-    L.geoJSON(entry.line, { style: () => ({ color: '#2E8B57', weight: 6, opacity: 1 }) }).addTo(this.highlightLayer);
+    L.geoJSON(line, { style: () => ({ color: '#2E8B57', weight: 6, opacity: 1 }) }).addTo(this.highlightLayer);
 
-    const bounds = L.geoJSON(entry.line).getBounds();
+    const bounds = L.geoJSON(line).getBounds();
     if (bounds.isValid()) this.map.panTo(bounds.getCenter());
 
     this._toast('🟢 Línea resaltada — permita dibujar nuevamente si el dibujo quedó al revés.');
@@ -3523,7 +3534,7 @@ class SelWorkSessionController {
       if (!g.series.length) {
         rows.push([g.selCode, tipoLabel, '', '']);
       } else {
-        g.series.forEach((s, i) => rows.push([g.selCode, tipoLabel, i + 1, s.value]));
+        g.series.forEach((s, i) => rows.push([g.selCode, tipoLabel, i + 1, this._serieValue(s)]));
       }
     });
 
@@ -3607,7 +3618,7 @@ class SelWorkSessionController {
         rowsHtml += `<tr><td>—</td><td colspan="2" style="color:var(--text-dim);">Sin series registradas todavía</td></tr>`;
       } else {
         g.series.forEach((serie, si) => {
-          rowsHtml += `<tr><td>${si + 1}</td><td colspan="2"><input type="text" class="serie-edit-input" data-group="${gi}" data-serie="${si}" value="${this._escape(serie.value)}" /></td></tr>`;
+          rowsHtml += `<tr><td>${si + 1}</td><td colspan="2"><input type="text" class="serie-edit-input" data-group="${gi}" data-serie="${si}" value="${this._escape(this._serieValue(serie))}" /></td></tr>`;
         });
       }
     });
@@ -3625,7 +3636,10 @@ class SelWorkSessionController {
       input.addEventListener('change', (e) => {
         const gi = Number(e.target.dataset.group);
         const si = Number(e.target.dataset.serie);
-        if (this.groups[gi]?.series[si]) this.groups[gi].series[si].value = e.target.value.trim();
+        if (this.groups[gi]?.series[si] !== undefined) {
+          const line = this._serieLine(this.groups[gi].series[si]);
+          this.groups[gi].series[si] = { value: e.target.value.trim(), line };
+        }
         this._persist();
       });
       // Al tocar/entrar al campo, se resalta en verde la línea de
