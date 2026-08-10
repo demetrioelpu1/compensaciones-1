@@ -900,7 +900,7 @@
       </div>
       <div class="layers-panel-body" id="sel-files-list"></div>
       <div class="layers-panel-footer">
-        <p>Comparte cada archivo .sel desde WhatsApp hacia esta app (botón Compartir → CMP), uno por uno. Aparecerán aquí como un menú — toca el nombre para ver u ocultar su contenido. Usa el ícono de basurero de cada archivo para quitarlo individualmente, o "Limpiar todo" para borrarlos todos.</p>
+        <p>Comparte cada archivo .sel desde WhatsApp hacia esta app (botón Compartir → CMP), uno por uno. Aparecerán aquí como un menú — toca el nombre para ver u ocultar su contenido. Usa el ícono de basurero de cada archivo para quitarlo individualmente, o "Limpiar todo" para borrar archivos Y progreso registrado, y empezar una campaña nueva.</p>
       </div>
     </aside>
 
@@ -3157,10 +3157,13 @@ class SelFilesController {
   }
 
   async _handleClearAll() {
-    if (!window.confirm('¿Quitar TODOS los archivos SEL?')) return;
+    if (!window.confirm('¿Empezar una campaña nueva? Se borrarán TODOS los archivos SEL y el progreso de trabajo ya registrado (series, ítems, etc.). Esta acción no se puede deshacer.')) return;
     await this.persistenceService.clearAll();
+    if (this.workSessionPersistenceService) await this.workSessionPersistenceService.clearAllProgress();
     this.openNames.clear();
     await this._renderFromStorage();
+    if (typeof this.onClearAll === 'function') this.onClearAll();
+    this._toast('✓ Todo limpio. Listo para una campaña nueva.');
   }
 
   _togglePanel(force) {
@@ -3267,6 +3270,15 @@ class SelFilesController {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+  }
+
+  _toast(msg) {
+    const el = document.getElementById('toast');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
   }
 }
 
@@ -3378,6 +3390,16 @@ class SelWorkSessionPersistenceService {
       const db = await this.dbPromise;
       const tx = db.transaction(this.metaStore, 'readwrite');
       tx.objectStore(this.metaStore).delete('active');
+    } catch (err) { /* silencioso */ }
+  }
+
+  /** Borra el progreso de TODOS los archivos (para empezar una campaña nueva desde cero). */
+  async clearAllProgress() {
+    try {
+      const db = await this.dbPromise;
+      const tx = db.transaction([this.progressStore, this.metaStore], 'readwrite');
+      tx.objectStore(this.progressStore).clear();
+      tx.objectStore(this.metaStore).clear();
     } catch (err) { /* silencioso */ }
   }
 }
@@ -3524,6 +3546,17 @@ class SelWorkSessionController {
     this._updateBadge();
     this.persistenceService.clearActiveFile(); // el progreso del archivo NO se borra, solo deja de estar "activo"
     if (typeof this.onFinished === 'function') this.onFinished();
+  }
+
+  /** Limpia la sesión visible en pantalla (badge, tabla, resaltado) cuando se borró todo desde el menú de archivos. */
+  resetSessionUI() {
+    this.modal.classList.remove('show');
+    this.finishModal.classList.remove('show');
+    this.fileName = null;
+    this.groups = [];
+    this.activeGroupIndex = 0;
+    this.highlightLayer.clearLayers();
+    this._updateBadge();
   }
 
   /** Descarga un CSV (se abre directamente en Excel) con todo lo trabajado en este archivo. */
@@ -3719,6 +3752,10 @@ class AppController {
     this.selWorkSessionController.onFinished = async () => {
       await this.selFilesController._renderFromStorage(); // refresca el color de "trabajado"
       this.selFilesController._togglePanel(true);
+    };
+
+    this.selFilesController.onClearAll = () => {
+      this.selWorkSessionController.resetSessionUI();
     };
   }
 
