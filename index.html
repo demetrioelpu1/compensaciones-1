@@ -3643,7 +3643,7 @@ class SelWorkSessionController {
         const entry = g.series[i];
         const value = this._serieValue(entry);
         const supplyId = typeof entry === 'object' ? entry.supplyId : null;
-        const folderName = `${g.selCode}_serie_${value}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const folderName = `${value}`.replace(/[^a-zA-Z0-9_-]/g, '_');
 
         const supply = supplyId != null ? allSupplies.find((s) => s.id === supplyId) : null;
         if (supply && supply.photos && supply.photos.length) {
