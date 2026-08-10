@@ -3167,6 +3167,7 @@ class SelFilesController {
     const willOpen = force !== undefined ? force : !this.panel.classList.contains('open');
     this.panel.classList.toggle('open', willOpen);
     this.btnToggle.classList.toggle('active', willOpen);
+    if (willOpen) this._renderFromStorage(); // siempre al día, refleje o no "Finalizar trabajo"
   }
 
   async _renderFromStorage() {
