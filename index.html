@@ -601,6 +601,11 @@
   .btn-select-group:disabled{ background:var(--ok); color:#fff; opacity:.9; cursor:default; }
   #tracker-table-wrap .tipo-1{ color:var(--danger); font-weight:700; }
   #tracker-table-wrap .tipo-0{ color:#4FA3E3; font-weight:700; }
+  #btn-save-sel-progress{
+    width:100%; margin-bottom:10px; background:transparent; border:1.5px solid var(--hivis);
+    color:var(--hivis); border-radius:9px; padding:11px 0; font-weight:700; font-size:12.5px;
+    cursor:pointer;
+  }
   .tracker-actions{ display:flex; gap:8px; }
   .tracker-actions button{
     flex:1; border:none; border-radius:9px; padding:12px 0;
@@ -931,6 +936,7 @@
           <button class="close-x" id="btn-close-tracker">✕</button>
         </div>
         <div id="tracker-table-wrap"></div>
+        <button id="btn-save-sel-progress">💾 Guardar cambios ahora</button>
         <div class="tracker-actions">
           <button id="btn-next-group">Siguiente ítem →</button>
           <button id="btn-finish-sel-session">Finalizar trabajo</button>
@@ -3305,6 +3311,7 @@ class SelWorkSessionController {
     this.btnClose = document.getElementById('btn-close-tracker');
     this.btnNextGroup = document.getElementById('btn-next-group');
     this.btnFinish = document.getElementById('btn-finish-sel-session');
+    this.btnSaveNow = document.getElementById('btn-save-sel-progress');
 
     this.onFinished = null; // callback() — quien orqueste puede reabrir el menú SEL
 
@@ -3312,6 +3319,7 @@ class SelWorkSessionController {
     this.btnClose.addEventListener('click', () => this.modal.classList.remove('show'));
     this.btnNextGroup.addEventListener('click', () => this._advanceGroup());
     this.btnFinish.addEventListener('click', () => this._finish());
+    this.btnSaveNow.addEventListener('click', () => this._persist(true));
 
     this._updateBadge();
   }
@@ -3375,13 +3383,21 @@ class SelWorkSessionController {
     this.modal.classList.add('show');
   }
 
-  _persist() {
-    if (!this.isActive()) return;
-    this.persistenceService.save({
-      fileName: this.fileName,
-      groups: this.groups,
-      activeGroupIndex: this.activeGroupIndex,
-    });
+  async _persist(notify) {
+    if (!this.isActive()) {
+      if (notify) this._toast('No hay ningún archivo en trabajo para guardar.');
+      return;
+    }
+    try {
+      await this.persistenceService.save({
+        fileName: this.fileName,
+        groups: this.groups,
+        activeGroupIndex: this.activeGroupIndex,
+      });
+      if (notify) this._toast('✓ Cambios guardados en este celular.');
+    } catch (err) {
+      this._toast('⚠ No se pudo guardar: ' + (err.message || err));
+    }
   }
 
   /**
