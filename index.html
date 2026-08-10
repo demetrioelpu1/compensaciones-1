@@ -3238,7 +3238,8 @@ class SelFilesController {
 class SelWorkSessionPersistenceService {
   constructor() {
     this.dbName = 'cmp-sel-session-db';
-    this.storeName = 'session';
+    this.progressStore = 'progress'; // progreso de CADA archivo trabajado (nunca se borra al finalizar)
+    this.metaStore = 'meta';         // cuál archivo es el "activo" ahora mismo (se borra al finalizar)
     this.dbPromise = this._openDB();
   }
 
@@ -3248,11 +3249,26 @@ class SelWorkSessionPersistenceService {
         reject(new Error('IndexedDB no disponible en este navegador.'));
         return;
       }
-      const request = indexedDB.open(this.dbName, 1);
-      request.onupgradeneeded = () => {
+      const request = indexedDB.open(this.dbName, 2);
+      request.onupgradeneeded = (event) => {
         const db = request.result;
-        if (!db.objectStoreNames.contains(this.storeName)) {
-          db.createObjectStore(this.storeName, { keyPath: 'id' });
+        if (!db.objectStoreNames.contains(this.progressStore)) {
+          db.createObjectStore(this.progressStore, { keyPath: 'fileName' });
+        }
+        if (!db.objectStoreNames.contains(this.metaStore)) {
+          db.createObjectStore(this.metaStore, { keyPath: 'id' });
+        }
+        // Migración desde la versión anterior (un solo "current"):
+        if (event.oldVersion < 2 && db.objectStoreNames.contains('session')) {
+          const tx = request.transaction;
+          const oldStore = tx.objectStore('session');
+          oldStore.get('current').onsuccess = (e) => {
+            const old = e.target.result;
+            if (old && old.fileName) {
+              tx.objectStore(this.progressStore).put({ fileName: old.fileName, groups: old.groups, activeGroupIndex: old.activeGroupIndex });
+              tx.objectStore(this.metaStore).put({ id: 'active', fileName: old.fileName });
+            }
+          };
         }
       };
       request.onsuccess = () => resolve(request.result);
@@ -3260,20 +3276,22 @@ class SelWorkSessionPersistenceService {
     });
   }
 
-  async save(state) {
+  /** Guarda el progreso de UN archivo específico (se acumula, nunca se pierde). */
+  async saveProgress(fileName, groups, activeGroupIndex) {
     try {
       const db = await this.dbPromise;
-      const tx = db.transaction(this.storeName, 'readwrite');
-      tx.objectStore(this.storeName).put({ id: 'current', ...state });
+      const tx = db.transaction(this.progressStore, 'readwrite');
+      tx.objectStore(this.progressStore).put({ fileName, groups, activeGroupIndex });
     } catch (err) { /* silencioso: no interrumpe el trabajo si falla el guardado */ }
   }
 
-  async load() {
+  /** Recupera el progreso ya guardado de un archivo, si existe. */
+  async loadProgress(fileName) {
     try {
       const db = await this.dbPromise;
       return await new Promise((resolve, reject) => {
-        const tx = db.transaction(this.storeName, 'readonly');
-        const req = tx.objectStore(this.storeName).get('current');
+        const tx = db.transaction(this.progressStore, 'readonly');
+        const req = tx.objectStore(this.progressStore).get(fileName);
         req.onsuccess = () => resolve(req.result || null);
         req.onerror = () => reject(req.error);
       });
@@ -3282,11 +3300,36 @@ class SelWorkSessionPersistenceService {
     }
   }
 
-  async clear() {
+  /** Marca cuál archivo es el que está "en trabajo" ahora mismo. */
+  async setActiveFile(fileName) {
     try {
       const db = await this.dbPromise;
-      const tx = db.transaction(this.storeName, 'readwrite');
-      tx.objectStore(this.storeName).delete('current');
+      const tx = db.transaction(this.metaStore, 'readwrite');
+      tx.objectStore(this.metaStore).put({ id: 'active', fileName });
+    } catch (err) { /* silencioso */ }
+  }
+
+  /** Devuelve el nombre del archivo activo (o null si no hay ninguno). */
+  async getActiveFile() {
+    try {
+      const db = await this.dbPromise;
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction(this.metaStore, 'readonly');
+        const req = tx.objectStore(this.metaStore).get('active');
+        req.onsuccess = () => resolve(req.result ? req.result.fileName : null);
+        req.onerror = () => reject(req.error);
+      });
+    } catch (err) {
+      return null;
+    }
+  }
+
+  /** "Finalizar trabajo" solo quita la marca de "activo" — el progreso del archivo NO se borra. */
+  async clearActiveFile() {
+    try {
+      const db = await this.dbPromise;
+      const tx = db.transaction(this.metaStore, 'readwrite');
+      tx.objectStore(this.metaStore).delete('active');
     } catch (err) { /* silencioso */ }
   }
 }
@@ -3328,13 +3371,26 @@ class SelWorkSessionController {
     return this.groups.length > 0;
   }
 
-  start(fileName, groups) {
-    this.fileName = fileName;
-    this.groups = groups;
-    this.activeGroupIndex = 0;
+  async start(fileName, groups) {
+    const saved = await this.persistenceService.loadProgress(fileName);
+
+    if (saved && saved.groups && saved.groups.length === groups.length) {
+      // Ya se había trabajado antes en este archivo: se recupera el
+      // progreso (series ya registradas), no se empieza de cero.
+      this.fileName = fileName;
+      this.groups = saved.groups;
+      this.activeGroupIndex = saved.activeGroupIndex || 0;
+      this._toast(`Continuando con ${fileName} · Ítem ${this.activeGroupIndex + 1} de ${groups.length}`);
+    } else {
+      this.fileName = fileName;
+      this.groups = groups;
+      this.activeGroupIndex = 0;
+      this._toast(`Trabajando con ${fileName} · Ítem 1 de ${groups.length}`);
+    }
+
+    await this.persistenceService.setActiveFile(fileName);
     this._updateBadge();
     this._persist();
-    this._toast(`Trabajando con ${fileName} · Ítem 1 de ${groups.length}`);
   }
 
   /** Se llama automáticamente cada vez que se guarda un suministro. */
@@ -3374,7 +3430,7 @@ class SelWorkSessionController {
     this.groups = [];
     this.activeGroupIndex = 0;
     this._updateBadge();
-    this.persistenceService.clear();
+    this.persistenceService.clearActiveFile(); // el progreso del archivo NO se borra, solo deja de estar "activo"
     if (typeof this.onFinished === 'function') this.onFinished();
   }
 
@@ -3389,11 +3445,7 @@ class SelWorkSessionController {
       return;
     }
     try {
-      await this.persistenceService.save({
-        fileName: this.fileName,
-        groups: this.groups,
-        activeGroupIndex: this.activeGroupIndex,
-      });
+      await this.persistenceService.saveProgress(this.fileName, this.groups, this.activeGroupIndex);
       if (notify) this._toast('✓ Cambios guardados en este celular.');
     } catch (err) {
       this._toast('⚠ No se pudo guardar: ' + (err.message || err));
@@ -3405,9 +3457,13 @@ class SelWorkSessionController {
    * la app — así el progreso del día nunca se pierde al cerrarla.
    */
   async restoreFromStorage() {
-    const saved = await this.persistenceService.load();
+    const activeFileName = await this.persistenceService.getActiveFile();
+    if (!activeFileName) return;
+
+    const saved = await this.persistenceService.loadProgress(activeFileName);
     if (!saved) return;
-    this.fileName = saved.fileName;
+
+    this.fileName = activeFileName;
     this.groups = saved.groups;
     this.activeGroupIndex = saved.activeGroupIndex || 0;
     this._updateBadge();
@@ -3523,13 +3579,13 @@ class AppController {
     this.selWorkSessionController = new SelWorkSessionController(this.selWorkSessionPersistenceService);
     window.__selWorkSessionController = this.selWorkSessionController; // acceso desde SupplyWorkflowController
 
-    this.selFilesController.onWorkWithFile = (fileName, content) => {
+    this.selFilesController.onWorkWithFile = async (fileName, content) => {
       const groups = this.selFilesController.parseGroups(content);
       if (!groups.length) {
         alert('Este archivo no tiene datos reconocibles para trabajar.');
         return;
       }
-      this.selWorkSessionController.start(fileName, groups);
+      await this.selWorkSessionController.start(fileName, groups);
       this.selFilesController._togglePanel(false);
     };
 
