@@ -593,6 +593,12 @@
     background:rgba(242,183,5,.08); font-weight:700; color:var(--hivis);
   }
   #tracker-table-wrap tr.active-group td{ background:rgba(46,139,87,.08); }
+  .group-header-row{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .btn-select-group{
+    background:var(--hivis); color:#181c22; border:none; border-radius:7px;
+    padding:5px 10px; font-size:10px; font-weight:700; cursor:pointer; flex-shrink:0;
+  }
+  .btn-select-group:disabled{ background:var(--ok); color:#fff; opacity:.9; cursor:default; }
   #tracker-table-wrap .tipo-1{ color:var(--danger); font-weight:700; }
   #tracker-table-wrap .tipo-0{ color:#4FA3E3; font-weight:700; }
   .tracker-actions{ display:flex; gap:8px; }
@@ -3278,6 +3284,14 @@ class SelWorkSessionController {
     }
   }
 
+  _selectGroup(gi) {
+    if (gi < 0 || gi >= this.groups.length || gi === this.activeGroupIndex) return;
+    this.activeGroupIndex = gi;
+    this._updateBadge();
+    this._renderTracker();
+    this._toast(`Trabajando ahora en el ítem ${gi + 1} de ${this.groups.length}`);
+  }
+
   _finish() {
     if (!window.confirm('¿Culminaste con el trabajo de este archivo?')) return;
     this.modal.classList.remove('show');
@@ -3314,7 +3328,12 @@ class SelWorkSessionController {
       const isActiveGroup = gi === this.activeGroupIndex;
       const tipoLabel = g.tipo === '1' ? 'Sobretensión (1)' : 'Subtensión (0)';
       rowsHtml += `<tr class="group-header${isActiveGroup ? ' active-group' : ''}">
-        <td colspan="3">${this._escape(g.selCode)} <span class="tipo-${g.tipo}">${tipoLabel}</span></td>
+        <td colspan="3">
+          <div class="group-header-row">
+            <span>${this._escape(g.selCode)} <span class="tipo-${g.tipo}">${tipoLabel}</span></span>
+            <button class="btn-select-group" data-group="${gi}" ${isActiveGroup ? 'disabled' : ''}>${isActiveGroup ? 'En trabajo' : 'Elegir'}</button>
+          </div>
+        </td>
       </tr>`;
       if (!g.series.length) {
         rowsHtml += `<tr><td>—</td><td colspan="2" style="color:var(--text-dim);">Sin series registradas todavía</td></tr>`;
@@ -3339,6 +3358,15 @@ class SelWorkSessionController {
         const gi = Number(e.target.dataset.group);
         const si = Number(e.target.dataset.serie);
         if (this.groups[gi]) this.groups[gi].series[si] = e.target.value.trim();
+      });
+    });
+
+    // Botón "Elegir": permite saltar directo a cualquier grupo (no
+    // solo avanzar en orden con "Siguiente ítem").
+    this.tableWrap.querySelectorAll('.btn-select-group').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const gi = Number(e.target.dataset.group);
+        this._selectGroup(gi);
       });
     });
   }
