@@ -614,6 +614,24 @@
   #btn-next-group{ background:#181c22; color:var(--text); border:1px solid var(--line) !important; }
   #btn-finish-sel-session{ background:var(--ok); color:#fff; }
 
+  #sel-finish-modal{
+    display:none; position:fixed; inset:0; z-index:2150;
+    background:rgba(0,0,0,.65); align-items:center; justify-content:center; padding:20px;
+  }
+  #sel-finish-modal.show{ display:flex; }
+  #sel-finish-card{
+    background:var(--bar-bg-2); border:1px solid var(--line); border-radius:14px;
+    max-width:300px; width:100%; padding:18px;
+  }
+  #sel-finish-card h3{ font-size:13px; color:var(--text); margin:0 0 14px; text-align:center; }
+  #sel-finish-card button{
+    display:block; width:100%; border-radius:9px; padding:12px 0;
+    font-size:12.5px; font-weight:700; margin-bottom:8px; cursor:pointer; border:none;
+  }
+  #btn-finish-download{ background:var(--hivis); color:#181c22; }
+  #btn-finish-continue{ background:var(--ok); color:#fff; }
+  #btn-finish-cancel{ background:transparent; color:var(--text-dim); border:1px solid var(--line) !important; margin-bottom:0; }
+
   /* Barra de dibujo de acometida */
   #draw-toolbar{
     display:none;
@@ -941,6 +959,16 @@
           <button id="btn-next-group">Siguiente ítem →</button>
           <button id="btn-finish-sel-session">Finalizar trabajo</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Opciones al finalizar el trabajo de un archivo -->
+    <div id="sel-finish-modal">
+      <div id="sel-finish-card">
+        <h3>¿Culminaste con el trabajo de este archivo?</h3>
+        <button id="btn-finish-download">📊 Descargar en Excel</button>
+        <button id="btn-finish-continue">➡ Continuar con otro archivo</button>
+        <button id="btn-finish-cancel">Cancelar</button>
       </div>
     </div>
 
@@ -3356,6 +3384,11 @@ class SelWorkSessionController {
     this.btnFinish = document.getElementById('btn-finish-sel-session');
     this.btnSaveNow = document.getElementById('btn-save-sel-progress');
 
+    this.finishModal = document.getElementById('sel-finish-modal');
+    this.btnFinishDownload = document.getElementById('btn-finish-download');
+    this.btnFinishContinue = document.getElementById('btn-finish-continue');
+    this.btnFinishCancel = document.getElementById('btn-finish-cancel');
+
     this.onFinished = null; // callback() — quien orqueste puede reabrir el menú SEL
 
     this.badge.addEventListener('click', () => this._openTracker());
@@ -3363,6 +3396,10 @@ class SelWorkSessionController {
     this.btnNextGroup.addEventListener('click', () => this._advanceGroup());
     this.btnFinish.addEventListener('click', () => this._finish());
     this.btnSaveNow.addEventListener('click', () => this._persist(true));
+
+    this.btnFinishDownload.addEventListener('click', () => { this._exportToCSV(); this._doFinish(); });
+    this.btnFinishContinue.addEventListener('click', () => this._doFinish());
+    this.btnFinishCancel.addEventListener('click', () => this.finishModal.classList.remove('show'));
 
     this._updateBadge();
   }
@@ -3424,7 +3461,11 @@ class SelWorkSessionController {
   }
 
   _finish() {
-    if (!window.confirm('¿Culminaste con el trabajo de este archivo?')) return;
+    this.finishModal.classList.add('show');
+  }
+
+  _doFinish() {
+    this.finishModal.classList.remove('show');
     this.modal.classList.remove('show');
     this.fileName = null;
     this.groups = [];
@@ -3432,6 +3473,30 @@ class SelWorkSessionController {
     this._updateBadge();
     this.persistenceService.clearActiveFile(); // el progreso del archivo NO se borra, solo deja de estar "activo"
     if (typeof this.onFinished === 'function') this.onFinished();
+  }
+
+  /** Descarga un CSV (se abre directamente en Excel) con todo lo trabajado en este archivo. */
+  _exportToCSV() {
+    const rows = [['SEL', 'Tipo', 'Item', 'Serie']];
+    this.groups.forEach((g) => {
+      const tipoLabel = g.tipo === '1' ? 'Sobretensión (1)' : 'Subtensión (0)';
+      if (!g.series.length) {
+        rows.push([g.selCode, tipoLabel, '', '']);
+      } else {
+        g.series.forEach((s, i) => rows.push([g.selCode, tipoLabel, i + 1, s]));
+      }
+    });
+
+    const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(this.fileName || 'archivo').replace('.sel', '')}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   _openTracker() {
