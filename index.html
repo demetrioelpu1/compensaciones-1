@@ -464,6 +464,17 @@
   }
   .gis-popup tr:last-child td.attr-line{ border-bottom:none; }
   .gis-popup .title{ font-weight:700; font-size:12px; margin-bottom:5px; }
+
+  /* Popup de la línea de acometida: más ancho que el de Subestaciones
+     para que "Suministro de origen" no se parta en varias líneas */
+  .acometida-popup{ max-width:280px; }
+  .acometida-popup .title{ font-weight:700; font-size:13px; margin-bottom:8px; color:var(--text); }
+  .acometida-popup table{ border-collapse:collapse; font-size:12px; width:100%; }
+  .acometida-popup td{ padding:5px 0; vertical-align:top; word-break:break-word; color:var(--text); }
+  .acometida-popup td.k{
+    color:var(--text-dim); white-space:nowrap; font-weight:600;
+    padding-right:12px; width:1%; /* se ajusta al contenido, no a un % fijo */
+  }
   .leaflet-popup-content{ margin:12px 14px !important; }
   .gis-popup-close-btn{
     display:block; width:100%; margin-top:10px;
@@ -3099,8 +3110,8 @@ class SupplyWorkflowController {
           .map(([k, v]) => `<tr><td class="k">${k}</td><td>${v}</td></tr>`)
           .join('');
         this.current.lineLayer.bindPopup(
-          `<div class="gis-popup"><div class="title">Acometida</div><table>${rows}</table></div>`,
-          { autoPan: false, closeButton: true }
+          `<div class="acometida-popup"><div class="title">Acometida</div><table>${rows}</table></div>`,
+          { autoPan: false, closeButton: true, maxWidth: 280, minWidth: 230 }
         );
       }
 
@@ -3151,8 +3162,8 @@ class SupplyWorkflowController {
         .map(([k, v]) => `<tr><td class="k">${k}</td><td>${v}</td></tr>`)
         .join('');
       layer.bindPopup(
-        `<div class="gis-popup"><div class="title">Acometida</div><table>${rows}</table></div>`,
-        { autoPan: false, closeButton: true }
+        `<div class="acometida-popup"><div class="title">Acometida</div><table>${rows}</table></div>`,
+        { autoPan: false, closeButton: true, maxWidth: 280, minWidth: 230 }
       );
     });
   }
