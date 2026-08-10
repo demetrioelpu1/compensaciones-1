@@ -583,6 +583,12 @@
     padding:6px; border-bottom:1px solid var(--line); color:var(--text);
     font-family:var(--mono); font-size:10.5px;
   }
+  .serie-edit-input{
+    width:100%; background:#0e1116; border:1px solid var(--line); border-radius:6px;
+    padding:6px 8px; color:var(--text); font-family:var(--mono); font-size:10.5px;
+    box-sizing:border-box;
+  }
+  .serie-edit-input:focus{ border-color:var(--hivis); outline:none; }
   #tracker-table-wrap tr.group-header td{
     background:rgba(242,183,5,.08); font-weight:700; color:var(--hivis);
   }
@@ -3306,14 +3312,15 @@ class SelWorkSessionController {
     let rowsHtml = '';
     this.groups.forEach((g, gi) => {
       const isActiveGroup = gi === this.activeGroupIndex;
+      const tipoLabel = g.tipo === '1' ? 'Sobretensión (1)' : 'Subtensión (0)';
       rowsHtml += `<tr class="group-header${isActiveGroup ? ' active-group' : ''}">
-        <td colspan="3">${this._escape(g.selCode)} <span class="tipo-${g.tipo}">${g.tipo === '1' ? 'Sobretensión' : 'Subtensión'}</span></td>
+        <td colspan="3">${this._escape(g.selCode)} <span class="tipo-${g.tipo}">${tipoLabel}</span></td>
       </tr>`;
       if (!g.series.length) {
         rowsHtml += `<tr><td>—</td><td colspan="2" style="color:var(--text-dim);">Sin series registradas todavía</td></tr>`;
       } else {
         g.series.forEach((serie, si) => {
-          rowsHtml += `<tr><td>${si + 1}</td><td colspan="2">${this._escape(serie)}</td></tr>`;
+          rowsHtml += `<tr><td>${si + 1}</td><td colspan="2"><input type="text" class="serie-edit-input" data-group="${gi}" data-serie="${si}" value="${this._escape(serie)}" /></td></tr>`;
         });
       }
     });
@@ -3324,6 +3331,16 @@ class SelWorkSessionController {
         <tbody>${rowsHtml}</tbody>
       </table>
     `;
+
+    // Cada serie es editable: al corregirla, se guarda directo en el
+    // grupo correspondiente (por si se ingresó mal un número).
+    this.tableWrap.querySelectorAll('.serie-edit-input').forEach((input) => {
+      input.addEventListener('change', (e) => {
+        const gi = Number(e.target.dataset.group);
+        const si = Number(e.target.dataset.serie);
+        if (this.groups[gi]) this.groups[gi].series[si] = e.target.value.trim();
+      });
+    });
   }
 
   _escape(str) {
