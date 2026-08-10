@@ -3058,7 +3058,7 @@ class SupplyWorkflowController {
       // Si hay una sesión de trabajo de archivo .sel activa, la serie
       // recién registrada se suma automáticamente al ítem en curso.
       if (window.__selWorkSessionController) {
-        window.__selWorkSessionController.addSerie(this.current.form.medidorSerie);
+        window.__selWorkSessionController.addSerie(this.current.form.medidorSerie, this.current.lineGeoJSON);
       }
 
       this.photoModal.classList.remove('show');
@@ -3383,10 +3383,12 @@ class SelWorkSessionPersistenceService {
 }
 
 class SelWorkSessionController {
-  constructor(persistenceService) {
+  constructor(persistenceService, mapService) {
     this.persistenceService = persistenceService;
+    this.map = mapService.getMap();
+    this.highlightLayer = L.layerGroup().addTo(this.map); // solo para resaltar en verde, no toca las líneas permanentes
     this.fileName = null;
-    this.groups = []; // [{ selCode, tipo, series: [] }]
+    this.groups = []; // [{ selCode, tipo, series: [{ value, line }] }]
     this.activeGroupIndex = 0;
 
     this.counterEl = document.getElementById('supply-counter');
@@ -3451,10 +3453,10 @@ class SelWorkSessionController {
   }
 
   /** Se llama automáticamente cada vez que se guarda un suministro. */
-  addSerie(serie) {
+  addSerie(serie, lineGeoJSON) {
     if (!this.isActive() || !serie) return;
     const group = this.groups[this.activeGroupIndex];
-    if (group) group.series.push(serie);
+    if (group) group.series.push({ value: serie, line: lineGeoJSON || null });
     this._updateBadge();
     this._persist();
   }
@@ -3480,6 +3482,24 @@ class SelWorkSessionController {
     this._toast(`Trabajando ahora en el ítem ${gi + 1} de ${this.groups.length}`);
   }
 
+  /** Resalta en verde, sobre el mapa, la línea de acometida asociada a esta serie. */
+  _highlightLineForSerie(gi, si) {
+    const entry = this.groups[gi]?.series[si];
+    this.highlightLayer.clearLayers();
+
+    if (!entry || !entry.line) {
+      this._toast('Esta serie no tiene una línea de acometida asociada.');
+      return;
+    }
+
+    L.geoJSON(entry.line, { style: () => ({ color: '#2E8B57', weight: 6, opacity: 1 }) }).addTo(this.highlightLayer);
+
+    const bounds = L.geoJSON(entry.line).getBounds();
+    if (bounds.isValid()) this.map.panTo(bounds.getCenter());
+
+    this._toast('🟢 Línea resaltada — permita dibujar nuevamente si el dibujo quedó al revés.');
+  }
+
   _finish() {
     this.finishModal.classList.add('show');
   }
@@ -3503,7 +3523,7 @@ class SelWorkSessionController {
       if (!g.series.length) {
         rows.push([g.selCode, tipoLabel, '', '']);
       } else {
-        g.series.forEach((s, i) => rows.push([g.selCode, tipoLabel, i + 1, s]));
+        g.series.forEach((s, i) => rows.push([g.selCode, tipoLabel, i + 1, s.value]));
       }
     });
 
@@ -3587,7 +3607,7 @@ class SelWorkSessionController {
         rowsHtml += `<tr><td>—</td><td colspan="2" style="color:var(--text-dim);">Sin series registradas todavía</td></tr>`;
       } else {
         g.series.forEach((serie, si) => {
-          rowsHtml += `<tr><td>${si + 1}</td><td colspan="2"><input type="text" class="serie-edit-input" data-group="${gi}" data-serie="${si}" value="${this._escape(serie)}" /></td></tr>`;
+          rowsHtml += `<tr><td>${si + 1}</td><td colspan="2"><input type="text" class="serie-edit-input" data-group="${gi}" data-serie="${si}" value="${this._escape(serie.value)}" /></td></tr>`;
         });
       }
     });
@@ -3605,8 +3625,15 @@ class SelWorkSessionController {
       input.addEventListener('change', (e) => {
         const gi = Number(e.target.dataset.group);
         const si = Number(e.target.dataset.serie);
-        if (this.groups[gi]) this.groups[gi].series[si] = e.target.value.trim();
+        if (this.groups[gi]?.series[si]) this.groups[gi].series[si].value = e.target.value.trim();
         this._persist();
+      });
+      // Al tocar/entrar al campo, se resalta en verde la línea de
+      // acometida que corresponde a esa serie sobre el mapa.
+      input.addEventListener('focus', (e) => {
+        const gi = Number(e.target.dataset.group);
+        const si = Number(e.target.dataset.serie);
+        this._highlightLineForSerie(gi, si);
       });
     });
 
@@ -3661,7 +3688,7 @@ class AppController {
     // este archivo" arma los grupos y comienza; al terminar, se
     // reabre el menú de archivos SEL para elegir el siguiente.
     this.selWorkSessionPersistenceService = new SelWorkSessionPersistenceService();
-    this.selWorkSessionController = new SelWorkSessionController(this.selWorkSessionPersistenceService);
+    this.selWorkSessionController = new SelWorkSessionController(this.selWorkSessionPersistenceService, this.mapService);
     window.__selWorkSessionController = this.selWorkSessionController; // acceso desde SupplyWorkflowController
     this.selFilesController.workSessionPersistenceService = this.selWorkSessionPersistenceService; // para pintar los archivos ya trabajados
 
