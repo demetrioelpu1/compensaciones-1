@@ -272,6 +272,12 @@
     background:var(--bar-bg-2); border:1px solid var(--line); border-radius:10px;
     margin-bottom:8px; overflow:hidden;
   }
+  .sel-file-item.worked{
+    background:#0f2a1c; border-color:#1e5c3a;
+  }
+  .sel-file-item.worked .sel-file-header .name::after{
+    content:' ✓ trabajado'; color:var(--ok); font-weight:400; font-size:9.5px;
+  }
   .sel-file-header{
     display:flex; align-items:center; gap:8px; padding:11px 12px; cursor:pointer;
   }
@@ -3117,8 +3123,9 @@ class SupplyWorkflowController {
 // contenido. No sabe nada de KMZ ni del resto de la app.
 // ---------------------------------------------------------------
 class SelFilesController {
-  constructor(persistenceService) {
+  constructor(persistenceService, workSessionPersistenceService) {
     this.persistenceService = persistenceService;
+    this.workSessionPersistenceService = workSessionPersistenceService; // para saber qué archivos ya tienen trabajo guardado
 
     this.panel = document.getElementById('sel-panel');
     this.btnToggle = document.getElementById('btn-sel-files');
@@ -3175,10 +3182,11 @@ class SelFilesController {
     }
 
     this.listEl.innerHTML = '';
-    files.forEach((f) => {
+    for (const f of files) {
       const isOpen = this.openNames.has(f.fileName);
+      const hasWork = await this._hasSavedWork(f.fileName);
       const item = document.createElement('div');
-      item.className = 'sel-file-item' + (isOpen ? ' open' : '');
+      item.className = 'sel-file-item' + (isOpen ? ' open' : '') + (hasWork ? ' worked' : '');
       item.innerHTML = `
         <div class="sel-file-header">
           <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -3211,7 +3219,18 @@ class SelFilesController {
         this._handleDeleteFile(f.fileName);
       });
       this.listEl.appendChild(item);
-    });
+    }
+  }
+
+  /** Devuelve true si este archivo ya tiene algún progreso guardado (aunque sea parcial). */
+  async _hasSavedWork(fileName) {
+    if (!this.workSessionPersistenceService) return false;
+    try {
+      const saved = await this.workSessionPersistenceService.loadProgress(fileName);
+      return !!(saved && saved.groups && saved.groups.some((g) => g.series && g.series.length > 0));
+    } catch (err) {
+      return false;
+    }
   }
 
   /**
@@ -3643,6 +3662,7 @@ class AppController {
     this.selWorkSessionPersistenceService = new SelWorkSessionPersistenceService();
     this.selWorkSessionController = new SelWorkSessionController(this.selWorkSessionPersistenceService);
     window.__selWorkSessionController = this.selWorkSessionController; // acceso desde SupplyWorkflowController
+    this.selFilesController.workSessionPersistenceService = this.selWorkSessionPersistenceService; // para pintar los archivos ya trabajados
 
     this.selFilesController.onWorkWithFile = async (fileName, content) => {
       const groups = this.selFilesController.parseGroups(content);
@@ -3654,7 +3674,8 @@ class AppController {
       this.selFilesController._togglePanel(false);
     };
 
-    this.selWorkSessionController.onFinished = () => {
+    this.selWorkSessionController.onFinished = async () => {
+      await this.selFilesController._renderFromStorage(); // refresca el color de "trabajado"
       this.selFilesController._togglePanel(true);
     };
   }
