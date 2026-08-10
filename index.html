@@ -2581,6 +2581,14 @@ class SupplyPersistenceService {
       return 0;
     }
   }
+
+  async clearAll() {
+    try {
+      const db = await this.dbPromise;
+      const tx = db.transaction(this.storeName, 'readwrite');
+      tx.objectStore(this.storeName).clear();
+    } catch (err) { /* silencioso */ }
+  }
 }
 
 // ---------------------------------------------------------------
@@ -2661,6 +2669,7 @@ class AcometidaDrawController {
         coordinates: this.points.map((p) => [p.lng, p.lat]),
       },
     };
+    const finishedLayer = this.previewLine; // se guarda la referencia ANTES de desvincularla
 
     // La línea ya trazada queda PERMANENTE en el mapa: se quitan solo
     // los puntitos guía de dibujo, y se "desvincula" la línea del
@@ -2672,7 +2681,7 @@ class AcometidaDrawController {
     this.points = [];
 
     this._teardown();
-    if (typeof this.onFinish === 'function') this.onFinish(geojson);
+    if (typeof this.onFinish === 'function') this.onFinish(geojson, finishedLayer);
   }
 
   _cancel() {
@@ -2883,7 +2892,7 @@ class SupplyWorkflowController {
   _bindEvents() {
     this.btnStart.addEventListener('click', () => this._startNewSupply());
 
-    this.drawController.onFinish = (lineGeoJSON) => this._onLineFinished(lineGeoJSON);
+    this.drawController.onFinish = (lineGeoJSON, lineLayer) => this._onLineFinished(lineGeoJSON, lineLayer);
     this.drawController.onCancel = () => this._resetToStart();
 
     this.btnOpenScanner.addEventListener('click', () => {
@@ -2959,8 +2968,9 @@ class SupplyWorkflowController {
     this.drawController.start();
   }
 
-  _onLineFinished(lineGeoJSON) {
+  _onLineFinished(lineGeoJSON, lineLayer) {
     this.current.lineGeoJSON = lineGeoJSON;
+    this.current.lineLayer = lineLayer;
     this.scanPromptBanner.classList.add('show');
   }
 
@@ -3042,12 +3052,27 @@ class SupplyWorkflowController {
   async _saveSupplyAndContinue() {
     this.current.photos = this.photoFiles;
 
+    // Se calcula ANTES de guardar, para incluirlo en el registro
+    // persistido (así el popup se puede reconstruir tras reabrir la app).
+    let selCode = null;
+    let selTipoLabel = null;
+    if (window.__selWorkSessionController && window.__selWorkSessionController.isActive()) {
+      const wsc = window.__selWorkSessionController;
+      const activeGroup = wsc.groups?.[wsc.activeGroupIndex];
+      if (activeGroup) {
+        selCode = activeGroup.selCode;
+        selTipoLabel = activeGroup.tipo === '1' ? 'Sobretensión (1)' : 'Subtensión (0)';
+      }
+    }
+
     try {
       await this.persistenceService.saveSupply({
         lineGeoJSON: this.current.lineGeoJSON,
         scannedValue: this.current.scannedValue,
         form: this.current.form,
         photos: this.current.photos, // Blobs — IndexedDB los guarda de forma nativa
+        selCode,
+        selTipoLabel,
         savedAt: new Date().toISOString(),
       });
 
@@ -3059,6 +3084,24 @@ class SupplyWorkflowController {
       // recién registrada se suma automáticamente al ítem en curso.
       if (window.__selWorkSessionController) {
         window.__selWorkSessionController.addSerie(this.current.form.medidorSerie, this.current.lineGeoJSON);
+      }
+
+      // La línea dibujada queda con sus propios datos adosados (como
+      // una capa GIS real): al tocarla, muestra Serie, Fase, Tipo y
+      // el suministro (código SEL) de origen.
+      if (this.current.lineLayer) {
+        const rows = [
+          ['Serie', this.current.form.medidorSerie],
+          ['Fase', this.current.form.faseCampo],
+          ['Tipo', selTipoLabel || 'N/D'],
+          ['Suministro de origen', selCode || 'N/D'],
+        ]
+          .map(([k, v]) => `<tr><td class="k">${k}</td><td>${v}</td></tr>`)
+          .join('');
+        this.current.lineLayer.bindPopup(
+          `<div class="gis-popup"><div class="title">Acometida</div><table>${rows}</table></div>`,
+          { autoPan: false, closeButton: true }
+        );
       }
 
       this.photoModal.classList.remove('show');
@@ -3095,9 +3138,22 @@ class SupplyWorkflowController {
     const supplies = await this.persistenceService.getAll();
     supplies.forEach((s) => {
       if (!s.lineGeoJSON) return;
-      L.geoJSON(s.lineGeoJSON, {
+      const layer = L.geoJSON(s.lineGeoJSON, {
         style: () => ({ color: '#E4572E', weight: 3, opacity: 0.95 }),
       }).addTo(this.sketchLayerGroup);
+
+      const rows = [
+        ['Serie', s.form?.medidorSerie || 'N/D'],
+        ['Fase', s.form?.faseCampo || 'N/D'],
+        ['Tipo', s.selTipoLabel || 'N/D'],
+        ['Suministro de origen', s.selCode || 'N/D'],
+      ]
+        .map(([k, v]) => `<tr><td class="k">${k}</td><td>${v}</td></tr>`)
+        .join('');
+      layer.bindPopup(
+        `<div class="gis-popup"><div class="title">Acometida</div><table>${rows}</table></div>`,
+        { autoPan: false, closeButton: true }
+      );
     });
   }
 
@@ -3157,7 +3213,7 @@ class SelFilesController {
   }
 
   async _handleClearAll() {
-    if (!window.confirm('¿Empezar una campaña nueva? Se borrarán TODOS los archivos SEL y el progreso de trabajo ya registrado (series, ítems, etc.). Esta acción no se puede deshacer.')) return;
+    if (!window.confirm('¿Empezar una campaña nueva? Se borrarán TODOS los archivos SEL, el progreso registrado (series, ítems), los suministros guardados y los dibujos de acometida del mapa. Esta acción no se puede deshacer.')) return;
     await this.persistenceService.clearAll();
     if (this.workSessionPersistenceService) await this.workSessionPersistenceService.clearAllProgress();
     this.openNames.clear();
@@ -3754,8 +3810,11 @@ class AppController {
       this.selFilesController._togglePanel(true);
     };
 
-    this.selFilesController.onClearAll = () => {
+    this.selFilesController.onClearAll = async () => {
       this.selWorkSessionController.resetSessionUI();
+      this.mapService.sketchLayerGroup.clearLayers(); // borra los dibujos de acometida del mapa
+      await this.supplyPersistenceService.clearAll(); // borra los suministros guardados (para que no se redibujen solos al reabrir)
+      await this.supplyWorkflowController._refreshCounter();
     };
   }
 
