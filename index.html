@@ -3220,6 +3220,14 @@ class SupplyWorkflowController {
     this.lineLayersBySupplyId.delete(supplyId);
   }
 
+  /** Colorea de verde, al instante, la línea de acometida de un suministro ya corregido. */
+  markLineAsEdited(supplyId) {
+    const entry = this.lineLayersBySupplyId.get(supplyId);
+    if (entry && entry.main && entry.main.setStyle) {
+      entry.main.setStyle({ color: '#2E8B57' });
+    }
+  }
+
   async _refreshCounter() {
     const total = await this.persistenceService.count();
     this.savedCount = total;
@@ -3237,8 +3245,9 @@ class SupplyWorkflowController {
     const supplies = await this.persistenceService.getAll();
     supplies.forEach((s) => {
       if (!s.lineGeoJSON) return;
+      const lineColor = s.edited ? '#2E8B57' : '#E4572E'; // verde si ya fue corregido, rojo normal si no
       const layer = L.geoJSON(s.lineGeoJSON, {
-        style: () => ({ color: '#E4572E', weight: 3, opacity: 0.95 }),
+        style: () => ({ color: lineColor, weight: 3, opacity: 0.95 }),
       }).addTo(this.sketchLayerGroup);
 
       const rows = [
@@ -3767,7 +3776,7 @@ class SelWorkSessionController {
     this._toast('✓ Foto reemplazada y guardada.');
   }
 
-  _markEdited(gi, si) {
+  async _markEdited(gi, si) {
     const entry = this.groups[gi]?.series[si];
     if (!entry) return;
     const value = this._serieValue(entry);
@@ -3775,6 +3784,19 @@ class SelWorkSessionController {
     const supplyId = typeof entry === 'object' ? entry.supplyId : null;
     this.groups[gi].series[si] = { value, line, supplyId, edited: true };
     this._persist();
+
+    if (supplyId != null) {
+      // Se guarda también en el propio suministro (no solo en la
+      // sesión SEL), para que la línea siga verde aunque cierres y
+      // vuelvas a abrir la app.
+      if (this.supplyPersistenceService) {
+        await this.supplyPersistenceService.updateSupply(supplyId, { edited: true });
+      }
+      // Colorea de verde la línea YA dibujada en el mapa, al instante.
+      if (window.__supplyWorkflowController) {
+        window.__supplyWorkflowController.markLineAsEdited(supplyId);
+      }
+    }
   }
 
   _finish() {
@@ -4131,18 +4153,19 @@ ${placemarks.join('\n')}
 
     // Cada serie es editable: al corregirla, se guarda directo en el
     // grupo correspondiente (por si se ingresó mal un número), y
-    // queda marcada en verde de forma PERMANENTE (no solo al tocarla).
+    // queda marcada en verde de forma PERMANENTE (no solo al tocarla)
+    // — incluida la línea en el mapa, igual que con Fase y Foto.
     this.tableWrap.querySelectorAll('.serie-edit-input').forEach((input) => {
-      input.addEventListener('change', (e) => {
+      input.addEventListener('change', async (e) => {
         const gi = Number(e.target.dataset.group);
         const si = Number(e.target.dataset.serie);
         if (this.groups[gi]?.series[si] !== undefined) {
           const prev = this.groups[gi].series[si];
           const line = this._serieLine(prev);
           const supplyId = typeof prev === 'object' ? prev.supplyId : null;
-          this.groups[gi].series[si] = { value: e.target.value.trim(), line, supplyId, edited: true };
+          this.groups[gi].series[si] = { value: e.target.value.trim(), line, supplyId, edited: prev.edited };
         }
-        this._persist();
+        await this._markEdited(gi, si);
         this._renderTracker(); // vuelve a dibujar para que el verde quede fijo
       });
       // Al tocar/entrar al campo, se resalta en verde la línea de
