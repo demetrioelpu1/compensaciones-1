@@ -606,17 +606,41 @@
     box-sizing:border-box;
   }
   .serie-edit-input:focus{ border-color:var(--hivis); outline:none; }
-  /* Marca PERMANENTE (no solo al tocar) para series corregidas a mano */
-  .serie-edit-input.edited{
-    border-color:var(--ok); background:rgba(46,139,87,.15); color:var(--ok);
+
+  .serie-row-full{
+    border:1.5px solid var(--line); border-radius:8px; padding:8px; background:#12161c;
   }
-  .serie-row{ display:flex; align-items:center; gap:6px; }
-  .serie-row .serie-edit-input{ flex:1; }
+  /* Marca PERMANENTE (no solo al tocar) para filas con algo corregido a mano: serie, fase o fotos */
+  .serie-row-full.edited{
+    border-color:var(--ok); background:rgba(46,139,87,.12);
+  }
+  .serie-row-full.edited .serie-edit-input,
+  .serie-row-full.edited .fase-edit-select{
+    border-color:var(--ok); color:var(--ok);
+  }
+  .serie-line1{ display:flex; align-items:center; gap:6px; margin-bottom:8px; }
+  .serie-line1 .serie-edit-input{ flex:1; }
   .btn-delete-serie{
     flex-shrink:0; width:30px; height:30px; border-radius:6px;
     background:transparent; border:1px solid rgba(228,87,46,.35);
     color:var(--danger); font-size:13px; cursor:pointer;
   }
+  .serie-line2{ display:flex; align-items:center; gap:8px; }
+  .fase-edit-select{
+    background:#0e1116; border:1px solid var(--line); border-radius:6px;
+    padding:6px 4px; color:var(--text); font-family:var(--sans); font-size:10.5px;
+    flex-shrink:0; width:72px;
+  }
+  .fotos-mini{ display:flex; gap:5px; flex:1; }
+  .foto-mini-slot{
+    flex:1; aspect-ratio:1/1; max-width:44px; border-radius:6px; overflow:hidden;
+    border:1px dashed var(--line); background:#0e1116; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .foto-mini-slot img{ width:100%; height:100%; object-fit:cover; }
+  .foto-mini-empty{ font-size:7px; color:var(--text-dim); text-align:center; }
+  .foto-mini-slot input[type=file]{ display:none; }
+
   #tracker-table-wrap tr.group-header td{
     background:rgba(242,183,5,.08); font-weight:700; color:var(--hivis);
   }
@@ -1570,14 +1594,6 @@ class SelFilePersistenceService {
         tx.oncomplete = resolve;
         tx.onerror = () => reject(tx.error);
       });
-    } catch (err) { /* silencioso */ }
-  }
-
-  async deleteSupply(id) {
-    try {
-      const db = await this.dbPromise;
-      const tx = db.transaction(this.storeName, 'readwrite');
-      tx.objectStore(this.storeName).delete(id);
     } catch (err) { /* silencioso */ }
   }
 }
@@ -2619,6 +2635,40 @@ class SupplyPersistenceService {
       tx.objectStore(this.storeName).clear();
     } catch (err) { /* silencioso */ }
   }
+
+  async deleteSupply(id) {
+    try {
+      const db = await this.dbPromise;
+      const tx = db.transaction(this.storeName, 'readwrite');
+      tx.objectStore(this.storeName).delete(id);
+    } catch (err) { /* silencioso */ }
+  }
+
+  async getById(id) {
+    try {
+      const db = await this.dbPromise;
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction(this.storeName, 'readonly');
+        const req = tx.objectStore(this.storeName).get(id);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error);
+      });
+    } catch (err) {
+      return null;
+    }
+  }
+
+  /** Actualiza campos puntuales de un suministro ya guardado (ej: Fase o fotos corregidas en campo). */
+  async updateSupply(id, changes) {
+    try {
+      const db = await this.dbPromise;
+      const existing = await this.getById(id);
+      if (!existing) return;
+      const updated = { ...existing, ...changes, id };
+      const tx = db.transaction(this.storeName, 'readwrite');
+      tx.objectStore(this.storeName).put(updated);
+    } catch (err) { /* silencioso */ }
+  }
 }
 
 // ---------------------------------------------------------------
@@ -3525,6 +3575,7 @@ class SelWorkSessionController {
     this.fileName = null;
     this.groups = []; // [{ selCode, tipo, series: [{ value, line, supplyId }] }]
     this.activeGroupIndex = 0;
+    this.suppliesCache = new Map(); // id de suministro -> registro completo (Fase, fotos, etc.)
 
     this.counterEl = document.getElementById('supply-counter');
     this.badge = document.getElementById('sel-session-badge');
@@ -3675,6 +3726,55 @@ class SelWorkSessionController {
     }
 
     this._toast('Serie borrada. Puedes registrar un suministro nuevo para corregirla.');
+  }
+
+  /** Actualiza un campo del formulario del suministro (ej: Fase) y marca la fila en verde. */
+  async _updateSupplyField(gi, si, formChanges) {
+    const entry = this.groups[gi]?.series[si];
+    const supplyId = typeof entry === 'object' ? entry.supplyId : null;
+    if (supplyId == null || !this.supplyPersistenceService) {
+      this._toast('Esta serie no tiene un suministro asociado para corregir.');
+      return;
+    }
+
+    const supply = this.suppliesCache.get(supplyId);
+    const newForm = { ...(supply?.form || {}), ...formChanges };
+    await this.supplyPersistenceService.updateSupply(supplyId, { form: newForm });
+
+    this._markEdited(gi, si);
+    await this._refreshSuppliesCache();
+    this._renderTracker();
+    this._toast('✓ Corregido y guardado.');
+  }
+
+  /** Reemplaza una de las 3 fotos de un suministro y marca la fila en verde. */
+  async _retakePhoto(gi, si, photoIndex, file) {
+    const entry = this.groups[gi]?.series[si];
+    const supplyId = typeof entry === 'object' ? entry.supplyId : null;
+    if (supplyId == null || !this.supplyPersistenceService) {
+      this._toast('Esta serie no tiene un suministro asociado para corregir.');
+      return;
+    }
+
+    const supply = this.suppliesCache.get(supplyId);
+    const newPhotos = [...(supply?.photos || [null, null, null])];
+    newPhotos[photoIndex] = file;
+    await this.supplyPersistenceService.updateSupply(supplyId, { photos: newPhotos });
+
+    this._markEdited(gi, si);
+    await this._refreshSuppliesCache();
+    this._renderTracker();
+    this._toast('✓ Foto reemplazada y guardada.');
+  }
+
+  _markEdited(gi, si) {
+    const entry = this.groups[gi]?.series[si];
+    if (!entry) return;
+    const value = this._serieValue(entry);
+    const line = this._serieLine(entry);
+    const supplyId = typeof entry === 'object' ? entry.supplyId : null;
+    this.groups[gi].series[si] = { value, line, supplyId, edited: true };
+    this._persist();
   }
 
   _finish() {
@@ -3910,9 +4010,16 @@ ${placemarks.join('\n')}
       .replace(/"/g, '&quot;');
   }
 
-  _openTracker() {
+  async _openTracker() {
+    await this._refreshSuppliesCache();
     this._renderTracker();
     this.modal.classList.add('show');
+  }
+
+  async _refreshSuppliesCache() {
+    if (!this.supplyPersistenceService) return;
+    const all = await this.supplyPersistenceService.getAll();
+    this.suppliesCache = new Map(all.map((s) => [s.id, s]));
   }
 
   async _persist(notify) {
@@ -3978,11 +4085,37 @@ ${placemarks.join('\n')}
         rowsHtml += `<tr><td>—</td><td colspan="2" style="color:var(--text-dim);">Sin series registradas todavía</td></tr>`;
       } else {
         g.series.forEach((serie, si) => {
-          const editedClass = this._serieEdited(serie) ? ' edited' : '';
+          const edited = this._serieEdited(serie);
+          const editedClass = edited ? ' edited' : '';
+          const supplyId = typeof serie === 'object' ? serie.supplyId : null;
+          const supply = supplyId != null ? this.suppliesCache.get(supplyId) : null;
+          const currentFase = supply?.form?.faseCampo || '';
+          const photos = supply?.photos || [];
+
+          const faseOptions = ['', 'R', 'S', 'T', 'RS', 'ST', 'RT', 'RST', 'RN', 'SN', 'TN', 'RSTN']
+            .map((f) => `<option value="${f}" ${f === currentFase ? 'selected' : ''}>${f || 'Sin dato'}</option>`)
+            .join('');
+
+          let photosHtml = '';
+          for (let p = 0; p < 3; p++) {
+            const blob = photos[p];
+            const url = blob ? URL.createObjectURL(blob) : '';
+            photosHtml += `<label class="foto-mini-slot" data-group="${gi}" data-serie="${si}" data-photo="${p}">
+              ${url ? `<img src="${url}" />` : '<span class="foto-mini-empty">Sin foto</span>'}
+              <input type="file" accept="image/*" capture="environment" />
+            </label>`;
+          }
+
           rowsHtml += `<tr><td>${si + 1}</td><td colspan="2">
-            <div class="serie-row">
-              <input type="text" class="serie-edit-input${editedClass}" data-group="${gi}" data-serie="${si}" value="${this._escape(this._serieValue(serie))}" />
-              <button class="btn-delete-serie" data-group="${gi}" data-serie="${si}" title="Borrar esta serie">🗑</button>
+            <div class="serie-row-full${editedClass}">
+              <div class="serie-line1">
+                <input type="text" class="serie-edit-input" data-group="${gi}" data-serie="${si}" value="${this._escape(this._serieValue(serie))}" />
+                <button class="btn-delete-serie" data-group="${gi}" data-serie="${si}" title="Borrar esta serie">🗑</button>
+              </div>
+              <div class="serie-line2">
+                <select class="fase-edit-select" data-group="${gi}" data-serie="${si}">${faseOptions}</select>
+                <div class="fotos-mini">${photosHtml}</div>
+              </div>
             </div>
           </td></tr>`;
         });
@@ -4029,6 +4162,29 @@ ${placemarks.join('\n')}
         const gi = Number(e.target.dataset.group);
         const si = Number(e.target.dataset.serie);
         this._deleteSerie(gi, si);
+      });
+    });
+
+    // Selector de Fase: se guarda directo en el suministro y marca
+    // la fila en verde, igual que al corregir la serie.
+    this.tableWrap.querySelectorAll('.fase-edit-select').forEach((select) => {
+      select.addEventListener('change', (e) => {
+        const gi = Number(e.target.dataset.group);
+        const si = Number(e.target.dataset.serie);
+        this._updateSupplyField(gi, si, { faseCampo: e.target.value });
+      });
+    });
+
+    // Foto: tocar una miniatura permite retomarla (cámara), se
+    // reemplaza en el suministro guardado y marca la fila en verde.
+    this.tableWrap.querySelectorAll('.foto-mini-slot input[type=file]').forEach((input) => {
+      input.addEventListener('change', (e) => {
+        const slot = e.target.closest('.foto-mini-slot');
+        const gi = Number(slot.dataset.group);
+        const si = Number(slot.dataset.serie);
+        const photoIndex = Number(slot.dataset.photo);
+        const file = e.target.files[0];
+        if (file) this._retakePhoto(gi, si, photoIndex, file);
       });
     });
 
