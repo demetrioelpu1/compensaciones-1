@@ -3109,10 +3109,17 @@ class SupplyWorkflowController {
         ]
           .map(([k, v]) => `<tr><td class="k">${k}</td><td>${v}</td></tr>`)
           .join('');
-        this.current.lineLayer.bindPopup(
-          `<div class="acometida-popup"><div class="title">Acometida</div><table>${rows}</table></div>`,
-          { autoPan: false, closeButton: true, maxWidth: 280, minWidth: 230 }
-        );
+        const popupHtml = `<div class="acometida-popup"><div class="title">Acometida</div><table>${rows}</table></div>`;
+        const popupOpts = { autoPan: false, closeButton: true, maxWidth: 280, minWidth: 230 };
+
+        this.current.lineLayer.bindPopup(popupHtml, popupOpts);
+
+        // Franja invisible mucho más ancha (24px) sobre la misma línea,
+        // solo para que el toque en pantalla la detecte fácil — la
+        // línea visible sigue viéndose fina (3px), esto no la cambia.
+        L.polyline(this.current.lineLayer.getLatLngs(), {
+          color: '#000', opacity: 0, weight: 24,
+        }).bindPopup(popupHtml, popupOpts).addTo(this.sketchLayerGroup);
       }
 
       this.photoModal.classList.remove('show');
@@ -3161,10 +3168,15 @@ class SupplyWorkflowController {
       ]
         .map(([k, v]) => `<tr><td class="k">${k}</td><td>${v}</td></tr>`)
         .join('');
-      layer.bindPopup(
-        `<div class="acometida-popup"><div class="title">Acometida</div><table>${rows}</table></div>`,
-        { autoPan: false, closeButton: true, maxWidth: 280, minWidth: 230 }
-      );
+      const popupHtml = `<div class="acometida-popup"><div class="title">Acometida</div><table>${rows}</table></div>`;
+      const popupOpts = { autoPan: false, closeButton: true, maxWidth: 280, minWidth: 230 };
+
+      layer.bindPopup(popupHtml, popupOpts);
+
+      // Misma franja invisible ancha, para que sea fácil de tocar.
+      L.geoJSON(s.lineGeoJSON, { style: () => ({ opacity: 0, weight: 24 }) })
+        .bindPopup(popupHtml, popupOpts)
+        .addTo(this.sketchLayerGroup);
     });
   }
 
