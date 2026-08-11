@@ -3240,10 +3240,11 @@ class SupplyWorkflowController {
   /** Borra del mapa (línea visible + franja de toque) la acometida de un suministro específico. */
   removeLineForSupply(supplyId) {
     const entry = this.lineLayersBySupplyId.get(supplyId);
-    if (!entry) return;
+    if (!entry) return false;
     if (entry.main) this.sketchLayerGroup.removeLayer(entry.main);
     if (entry.hit) this.sketchLayerGroup.removeLayer(entry.hit);
     this.lineLayersBySupplyId.delete(supplyId);
+    return true;
   }
 
   /** Colorea de verde, al instante, la línea de acometida de un suministro ya corregido. */
@@ -3357,6 +3358,9 @@ class SelFilesController {
   async _handleDeleteFile(fileName) {
     if (!window.confirm(`¿Eliminar "${fileName}" por completo? Se borrará el archivo, su progreso registrado, sus suministros guardados y sus líneas del mapa. Los demás archivos NO se ven afectados. Esta acción no se puede deshacer.`)) return;
 
+    let idsFound = 0;
+    let linesRemoved = 0;
+
     // 1) Si había progreso guardado para este archivo, se borran los
     // suministros y líneas que le pertenecen (y solo esos).
     if (this.workSessionPersistenceService) {
@@ -3369,9 +3373,13 @@ class SelFilesController {
             if (id != null) supplyIds.push(id);
           });
         });
+        idsFound = supplyIds.length;
         for (const id of supplyIds) {
           if (this.supplyPersistenceService) await this.supplyPersistenceService.deleteSupply(id);
-          if (window.__supplyWorkflowController) window.__supplyWorkflowController.removeLineForSupply(id);
+          if (window.__supplyWorkflowController) {
+            const removed = window.__supplyWorkflowController.removeLineForSupply(id);
+            if (removed) linesRemoved++;
+          }
         }
       }
 
@@ -3390,7 +3398,7 @@ class SelFilesController {
     await this.persistenceService.deleteFile(fileName);
     this.openNames.delete(fileName);
     await this._renderFromStorage();
-    this._toast(`✓ "${fileName}" y todo su trabajo fueron eliminados.`);
+    this._toast(`✓ "${fileName}" eliminado (${linesRemoved}/${idsFound} líneas borradas del mapa).`);
   }
 
   async _handleClearAll() {
