@@ -3228,6 +3228,14 @@ class SupplyWorkflowController {
     }
   }
 
+  /** Actualiza el contenido del popup YA adosado a la línea, sin re-crearla (ambas capas: la visible y la franja de toque). */
+  updatePopupForSupply(supplyId, html) {
+    const entry = this.lineLayersBySupplyId.get(supplyId);
+    if (!entry) return;
+    if (entry.main && entry.main.setPopupContent) entry.main.setPopupContent(html);
+    if (entry.hit && entry.hit.setPopupContent) entry.hit.setPopupContent(html);
+  }
+
   async _refreshCounter() {
     const total = await this.persistenceService.count();
     this.savedCount = total;
@@ -3750,7 +3758,7 @@ class SelWorkSessionController {
     const newForm = { ...(supply?.form || {}), ...formChanges };
     await this.supplyPersistenceService.updateSupply(supplyId, { form: newForm });
 
-    this._markEdited(gi, si);
+    await this._markEdited(gi, si);
     await this._refreshSuppliesCache();
     this._renderTracker();
     this._toast('✓ Corregido y guardado.');
@@ -3770,7 +3778,7 @@ class SelWorkSessionController {
     newPhotos[photoIndex] = file;
     await this.supplyPersistenceService.updateSupply(supplyId, { photos: newPhotos });
 
-    this._markEdited(gi, si);
+    await this._markEdited(gi, si);
     await this._refreshSuppliesCache();
     this._renderTracker();
     this._toast('✓ Foto reemplazada y guardada.');
@@ -3796,7 +3804,33 @@ class SelWorkSessionController {
       if (window.__supplyWorkflowController) {
         window.__supplyWorkflowController.markLineAsEdited(supplyId);
       }
+      // Refresca el popup adosado a esa línea con los datos actuales
+      // (antes se quedaba con el dato viejo del momento en que se
+      // dibujó, aunque lo corrigieras después).
+      await this._refreshSuppliesCache();
+      this._rebuildPopupForSupply(gi, supplyId);
     }
+  }
+
+  /** Reconstruye el HTML del popup de la acometida con los datos MÁS RECIENTES del suministro, y lo aplica sin re-crear la línea. */
+  _rebuildPopupForSupply(gi, supplyId) {
+    if (supplyId == null || !window.__supplyWorkflowController) return;
+    const group = this.groups[gi];
+    const supply = this.suppliesCache.get(supplyId);
+    if (!group || !supply) return;
+
+    const tipoLabel = group.tipo === '1' ? 'Sobretensión (1)' : 'Subtensión (0)';
+    const rows = [
+      ['Serie', supply.form?.medidorSerie || 'N/D'],
+      ['Fase', supply.form?.faseCampo || 'N/D'],
+      ['Tipo', tipoLabel],
+      ['Suministro de origen', group.selCode || 'N/D'],
+    ]
+      .map(([k, v]) => `<tr><td class="k">${k}</td><td>${v}</td></tr>`)
+      .join('');
+
+    const html = `<div class="acometida-popup"><div class="title">Acometida</div><table>${rows}</table></div>`;
+    window.__supplyWorkflowController.updatePopupForSupply(supplyId, html);
   }
 
   _finish() {
@@ -4159,14 +4193,23 @@ ${placemarks.join('\n')}
       input.addEventListener('change', async (e) => {
         const gi = Number(e.target.dataset.group);
         const si = Number(e.target.dataset.serie);
+        const newValue = e.target.value.trim();
+        const prev = this.groups[gi]?.series[si];
+        const supplyId = typeof prev === 'object' ? prev.supplyId : null;
+
         if (this.groups[gi]?.series[si] !== undefined) {
-          const prev = this.groups[gi].series[si];
           const line = this._serieLine(prev);
-          const supplyId = typeof prev === 'object' ? prev.supplyId : null;
-          this.groups[gi].series[si] = { value: e.target.value.trim(), line, supplyId, edited: prev.edited };
+          this.groups[gi].series[si] = { value: newValue, line, supplyId, edited: prev.edited };
         }
-        await this._markEdited(gi, si);
-        this._renderTracker(); // vuelve a dibujar para que el verde quede fijo
+
+        if (supplyId != null) {
+          // Guarda también en el suministro real, usando el mismo
+          // camino que Fase/Foto — así el popup de la línea sí lo refleja.
+          await this._updateSupplyField(gi, si, { medidorSerie: newValue });
+        } else {
+          await this._markEdited(gi, si);
+          this._renderTracker(); // vuelve a dibujar para que el verde quede fijo
+        }
       });
       // Al tocar/entrar al campo, se resalta en verde la línea de
       // acometida que corresponde a esa serie sobre el mapa.
