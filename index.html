@@ -3671,6 +3671,18 @@ class SelWorkSessionController {
     const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
     zip.file(`${(this.fileName || 'archivo').replace('.sel', '')}.csv`, '\ufeff' + csv);
 
+    // GeoJSON: la opción más directa para ArcGIS Pro — se agrega
+    // como "Add Data" y arma una capa real con columnas de atributo
+    // de verdad (SEL, Fase, Tipo, Serie, Carpeta_Fotos), lista para
+    // combinarse con el resto de tus redes existentes.
+    const geojson = this._buildAcometidasGeoJSON(allSupplies);
+    if (geojson) {
+      zip.file(
+        `${(this.fileName || 'archivo').replace('.sel', '')}_acometidas.geojson`,
+        JSON.stringify(geojson, null, 2)
+      );
+    }
+
     // Archivo KML: las líneas de acometida con su tabla de atributos
     // adosada (Serie, Fase, Tipo, SEL de origen) — ArcGIS lo importa
     // directo con la herramienta "KML a Capa", generando geometría +
@@ -3688,7 +3700,48 @@ class SelWorkSessionController {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    this._toast('✓ Descarga lista: CSV + fotos + KMZ (con fotos incluidas, listo para abrir en ArcGIS/Google Earth).');
+    this._toast('✓ Descarga lista: CSV + fotos + GeoJSON (para ArcGIS) + KMZ.');
+  }
+
+  /**
+   * Construye un GeoJSON de las líneas de acometida, con los
+   * atributos como propiedades reales (SEL, Item, Serie, Fase, Tipo,
+   * y la carpeta donde están sus 3 fotos dentro de este mismo ZIP).
+   * Es la forma más directa de traer esto a ArcGIS Pro: "Add Data" →
+   * elegir el .geojson → queda como capa con columnas de verdad.
+   */
+  _buildAcometidasGeoJSON(allSupplies) {
+    const features = [];
+
+    this.groups.forEach((g) => {
+      const tipoLabel = g.tipo === '1' ? 'Sobretensión (1)' : 'Subtensión (0)';
+      g.series.forEach((entry, i) => {
+        const line = this._serieLine(entry);
+        if (!line || !line.geometry || line.geometry.type !== 'LineString') return;
+
+        const value = this._serieValue(entry);
+        const folderName = String(value).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const supplyId = typeof entry === 'object' ? entry.supplyId : null;
+        const supply = supplyId != null && allSupplies ? allSupplies.find((s) => s.id === supplyId) : null;
+        const fase = supply?.form?.faseCampo || 'N/D';
+
+        features.push({
+          type: 'Feature',
+          geometry: line.geometry,
+          properties: {
+            SEL: g.selCode,
+            Item: i + 1,
+            Serie: value,
+            Fase: fase,
+            Tipo: tipoLabel,
+            Carpeta_Fotos: folderName,
+          },
+        });
+      });
+    });
+
+    if (!features.length) return null;
+    return { type: 'FeatureCollection', features };
   }
 
   /**
