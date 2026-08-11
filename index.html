@@ -983,7 +983,7 @@
     <div id="sel-finish-modal">
       <div id="sel-finish-card">
         <h3>¿Culminaste con el trabajo de este archivo?</h3>
-        <button id="btn-finish-download">📊 Descargar Excel + fotos</button>
+        <button id="btn-finish-download">📊 Descargar Excel + fotos + KML (ArcGIS)</button>
         <button id="btn-finish-continue">➡ Continuar con otro archivo</button>
         <button id="btn-finish-cancel">Cancelar</button>
       </div>
@@ -3671,6 +3671,13 @@ class SelWorkSessionController {
     const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
     zip.file(`${(this.fileName || 'archivo').replace('.sel', '')}.csv`, '\ufeff' + csv);
 
+    // Archivo KML: las líneas de acometida con su tabla de atributos
+    // adosada (Serie, Fase, Tipo, SEL de origen) — ArcGIS lo importa
+    // directo con la herramienta "KML a Capa", generando geometría +
+    // tabla de atributos, igual que traería una geodatabase.
+    const kmzBlob = await this._buildAcometidasKMZ(allSupplies);
+    if (kmzBlob) zip.file(`${(this.fileName || 'archivo').replace('.sel', '')}_acometidas.kmz`, kmzBlob);
+
     const zipBlob = await zip.generateAsync({ type: 'blob' });
     const url = URL.createObjectURL(zipBlob);
     const a = document.createElement('a');
@@ -3681,7 +3688,97 @@ class SelWorkSessionController {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    this._toast('✓ Descarga lista: CSV + carpetas de fotos. Arrastra el ZIP extraído a tu carpeta de Drive.');
+    this._toast('✓ Descarga lista: CSV + fotos + KMZ (con fotos incluidas, listo para abrir en ArcGIS/Google Earth).');
+  }
+
+  /**
+   * Construye un KML con todas las líneas de acometida dibujadas en
+   * este archivo, cada una con su tabla de atributos adosada (Serie,
+   * Fase, Tipo, SEL de origen). Al importarlo en ArcGIS ("KML a
+   * Capa"), se genera automáticamente la geometría + su tabla de
+   * atributos, cumpliendo el mismo propósito que una geodatabase.
+   */
+  /**
+   * Construye un KMZ (KML + fotos embebidas dentro del mismo
+   * archivo) con todas las líneas de acometida. Cada línea trae su
+   * tabla de atributos (SEL, Fase, Tipo, Serie) Y sus 3 fotos en la
+   * burbuja de descripción — al hacer clic en la línea dentro de
+   * Google Earth o ArcGIS, se ven los datos y las fotos juntos, sin
+   * depender de ninguna carpeta externa.
+   */
+  async _buildAcometidasKMZ(allSupplies) {
+    const kmzZip = new JSZip();
+    const filesFolder = kmzZip.folder('files');
+    const placemarks = [];
+
+    for (const g of this.groups) {
+      const tipoLabel = g.tipo === '1' ? 'Sobretensión' : 'Subtensión';
+      for (let i = 0; i < g.series.length; i++) {
+        const entry = g.series[i];
+        const line = this._serieLine(entry);
+        if (!line || !line.geometry || line.geometry.type !== 'LineString') continue;
+
+        const value = this._serieValue(entry);
+        const safeValue = String(value).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const supplyId = typeof entry === 'object' ? entry.supplyId : null;
+        const supply = supplyId != null && allSupplies ? allSupplies.find((s) => s.id === supplyId) : null;
+        const fase = supply?.form?.faseCampo || 'N/D';
+        const coordsStr = line.geometry.coordinates.map((c) => c.join(',')).join(' ');
+
+        // Las 3 fotos se guardan dentro del propio KMZ (carpeta
+        // "files/") y se enlazan por ruta relativa en la descripción.
+        let photosHtml = '';
+        if (supply && supply.photos && supply.photos.length) {
+          supply.photos.forEach((blob, p) => {
+            if (!blob) return;
+            const photoName = `${safeValue}_${p + 1}.jpg`;
+            filesFolder.file(photoName, blob);
+            photosHtml += `<img src="files/${photoName}" width="240"/><br/>`;
+          });
+        }
+
+        placemarks.push(`    <Placemark>
+      <name>${this._escapeXml(value)}</name>
+      <description><![CDATA[
+        <b>SEL:</b> ${this._escapeXml(g.selCode)}<br/>
+        <b>Fase:</b> ${this._escapeXml(fase)}<br/>
+        <b>Tipo:</b> ${this._escapeXml(tipoLabel)} (${g.tipo})<br/>
+        ${photosHtml}
+      ]]></description>
+      <ExtendedData>
+        <Data name="SEL"><value>${this._escapeXml(g.selCode)}</value></Data>
+        <Data name="Item"><value>${i + 1}</value></Data>
+        <Data name="Serie"><value>${this._escapeXml(value)}</value></Data>
+        <Data name="Fase"><value>${this._escapeXml(fase)}</value></Data>
+        <Data name="Tipo"><value>${this._escapeXml(tipoLabel)} (${g.tipo})</value></Data>
+      </ExtendedData>
+      <LineString>
+        <coordinates>${coordsStr}</coordinates>
+      </LineString>
+    </Placemark>`);
+      }
+    }
+
+    if (!placemarks.length) return null;
+
+    const kmlText = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>${this._escapeXml((this.fileName || 'Acometidas').replace('.sel', ''))}</name>
+${placemarks.join('\n')}
+  </Document>
+</kml>`;
+
+    kmzZip.file('doc.kml', kmlText);
+    return await kmzZip.generateAsync({ type: 'blob' });
+  }
+
+  _escapeXml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
   }
 
   _openTracker() {
