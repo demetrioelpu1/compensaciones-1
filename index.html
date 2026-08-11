@@ -606,6 +606,17 @@
     box-sizing:border-box;
   }
   .serie-edit-input:focus{ border-color:var(--hivis); outline:none; }
+  /* Marca PERMANENTE (no solo al tocar) para series corregidas a mano */
+  .serie-edit-input.edited{
+    border-color:var(--ok); background:rgba(46,139,87,.15); color:var(--ok);
+  }
+  .serie-row{ display:flex; align-items:center; gap:6px; }
+  .serie-row .serie-edit-input{ flex:1; }
+  .btn-delete-serie{
+    flex-shrink:0; width:30px; height:30px; border-radius:6px;
+    background:transparent; border:1px solid rgba(228,87,46,.35);
+    color:var(--danger); font-size:13px; cursor:pointer;
+  }
   #tracker-table-wrap tr.group-header td{
     background:rgba(242,183,5,.08); font-weight:700; color:var(--hivis);
   }
@@ -1559,6 +1570,14 @@ class SelFilePersistenceService {
         tx.oncomplete = resolve;
         tx.onerror = () => reject(tx.error);
       });
+    } catch (err) { /* silencioso */ }
+  }
+
+  async deleteSupply(id) {
+    try {
+      const db = await this.dbPromise;
+      const tx = db.transaction(this.storeName, 'readwrite');
+      tx.objectStore(this.storeName).delete(id);
     } catch (err) { /* silencioso */ }
   }
 }
@@ -2854,6 +2873,7 @@ class SupplyWorkflowController {
     this.sketchLayerGroup = mapService.sketchLayerGroup;
     this.drawController = new AcometidaDrawController(mapService);
     this.scanController = new BarcodeScanController();
+    this.lineLayersBySupplyId = new Map(); // id de suministro -> {main, hit}, para poder borrar la línea al instante si se corrige
 
     this.current = null; // acumula los datos del suministro en curso
 
@@ -3117,9 +3137,11 @@ class SupplyWorkflowController {
         // Franja invisible mucho más ancha (24px) sobre la misma línea,
         // solo para que el toque en pantalla la detecte fácil — la
         // línea visible sigue viéndose fina (3px), esto no la cambia.
-        L.polyline(this.current.lineLayer.getLatLngs(), {
+        const hitLine = L.polyline(this.current.lineLayer.getLatLngs(), {
           color: '#000', opacity: 0, weight: 24,
         }).bindPopup(popupHtml, popupOpts).addTo(this.sketchLayerGroup);
+
+        this.lineLayersBySupplyId.set(newSupplyId, { main: this.current.lineLayer, hit: hitLine });
       }
 
       this.photoModal.classList.remove('show');
@@ -3137,6 +3159,15 @@ class SupplyWorkflowController {
     this.formModal.classList.remove('show');
     this.photoModal.classList.remove('show');
     this.btnStart.classList.remove('hidden');
+  }
+
+  /** Borra del mapa (línea visible + franja de toque) la acometida de un suministro específico. */
+  removeLineForSupply(supplyId) {
+    const entry = this.lineLayersBySupplyId.get(supplyId);
+    if (!entry) return;
+    if (entry.main) this.sketchLayerGroup.removeLayer(entry.main);
+    if (entry.hit) this.sketchLayerGroup.removeLayer(entry.hit);
+    this.lineLayersBySupplyId.delete(supplyId);
   }
 
   async _refreshCounter() {
@@ -3174,9 +3205,11 @@ class SupplyWorkflowController {
       layer.bindPopup(popupHtml, popupOpts);
 
       // Misma franja invisible ancha, para que sea fácil de tocar.
-      L.geoJSON(s.lineGeoJSON, { style: () => ({ opacity: 0, weight: 24 }) })
+      const hitLayer = L.geoJSON(s.lineGeoJSON, { style: () => ({ opacity: 0, weight: 24 }) })
         .bindPopup(popupHtml, popupOpts)
         .addTo(this.sketchLayerGroup);
+
+      this.lineLayersBySupplyId.set(s.id, { main: layer, hit: hitLayer });
     });
   }
 
@@ -3595,6 +3628,10 @@ class SelWorkSessionController {
     return typeof serie === 'string' ? null : (serie && serie.line) || null;
   }
 
+  _serieEdited(serie) {
+    return typeof serie === 'object' && !!(serie && serie.edited);
+  }
+
   _highlightLineForSerie(gi, si) {
     const entry = this.groups[gi]?.series[si];
     const line = this._serieLine(entry);
@@ -3611,6 +3648,33 @@ class SelWorkSessionController {
     if (bounds.isValid()) this.map.panTo(bounds.getCenter());
 
     this._toast('🟢 Línea resaltada — permita dibujar nuevamente si el dibujo quedó al revés.');
+  }
+
+  /**
+   * Borra una serie registrada: quita el dato del ítem, borra el
+   * suministro guardado (fotos incluidas) y quita su línea del mapa
+   * al instante — para corregir errores de campo sin dejar rastros.
+   */
+  async _deleteSerie(gi, si) {
+    const group = this.groups[gi];
+    if (!group || !group.series[si]) return;
+
+    if (!window.confirm('¿Borrar esta serie registrada? Se quitará el dato, su suministro guardado y su línea del mapa. Podrás volver a registrarla.')) return;
+
+    const entry = group.series[si];
+    const supplyId = typeof entry === 'object' ? entry.supplyId : null;
+
+    group.series.splice(si, 1);
+    this._persist();
+    this._updateBadge();
+    this._renderTracker();
+
+    if (supplyId != null) {
+      if (this.supplyPersistenceService) await this.supplyPersistenceService.deleteSupply(supplyId);
+      if (window.__supplyWorkflowController) window.__supplyWorkflowController.removeLineForSupply(supplyId);
+    }
+
+    this._toast('Serie borrada. Puedes registrar un suministro nuevo para corregirla.');
   }
 
   _finish() {
@@ -3914,7 +3978,13 @@ ${placemarks.join('\n')}
         rowsHtml += `<tr><td>—</td><td colspan="2" style="color:var(--text-dim);">Sin series registradas todavía</td></tr>`;
       } else {
         g.series.forEach((serie, si) => {
-          rowsHtml += `<tr><td>${si + 1}</td><td colspan="2"><input type="text" class="serie-edit-input" data-group="${gi}" data-serie="${si}" value="${this._escape(this._serieValue(serie))}" /></td></tr>`;
+          const editedClass = this._serieEdited(serie) ? ' edited' : '';
+          rowsHtml += `<tr><td>${si + 1}</td><td colspan="2">
+            <div class="serie-row">
+              <input type="text" class="serie-edit-input${editedClass}" data-group="${gi}" data-serie="${si}" value="${this._escape(this._serieValue(serie))}" />
+              <button class="btn-delete-serie" data-group="${gi}" data-serie="${si}" title="Borrar esta serie">🗑</button>
+            </div>
+          </td></tr>`;
         });
       }
     });
@@ -3927,16 +3997,20 @@ ${placemarks.join('\n')}
     `;
 
     // Cada serie es editable: al corregirla, se guarda directo en el
-    // grupo correspondiente (por si se ingresó mal un número).
+    // grupo correspondiente (por si se ingresó mal un número), y
+    // queda marcada en verde de forma PERMANENTE (no solo al tocarla).
     this.tableWrap.querySelectorAll('.serie-edit-input').forEach((input) => {
       input.addEventListener('change', (e) => {
         const gi = Number(e.target.dataset.group);
         const si = Number(e.target.dataset.serie);
         if (this.groups[gi]?.series[si] !== undefined) {
-          const line = this._serieLine(this.groups[gi].series[si]);
-          this.groups[gi].series[si] = { value: e.target.value.trim(), line };
+          const prev = this.groups[gi].series[si];
+          const line = this._serieLine(prev);
+          const supplyId = typeof prev === 'object' ? prev.supplyId : null;
+          this.groups[gi].series[si] = { value: e.target.value.trim(), line, supplyId, edited: true };
         }
         this._persist();
+        this._renderTracker(); // vuelve a dibujar para que el verde quede fijo
       });
       // Al tocar/entrar al campo, se resalta en verde la línea de
       // acometida que corresponde a esa serie sobre el mapa.
@@ -3944,6 +4018,17 @@ ${placemarks.join('\n')}
         const gi = Number(e.target.dataset.group);
         const si = Number(e.target.dataset.serie);
         this._highlightLineForSerie(gi, si);
+      });
+    });
+
+    // Botón de borrar: quita la serie registrada y, si tenía una
+    // línea asociada, la borra del mapa al instante — para corregir
+    // errores de campo sin dejar datos ni dibujos sueltos.
+    this.tableWrap.querySelectorAll('.btn-delete-serie').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const gi = Number(e.target.dataset.group);
+        const si = Number(e.target.dataset.serie);
+        this._deleteSerie(gi, si);
       });
     });
 
@@ -3983,6 +4068,7 @@ class AppController {
     // Módulo de registro de suministro (acometida → escaneo → forma → fotos)
     this.supplyPersistenceService = new SupplyPersistenceService();
     this.supplyWorkflowController = new SupplyWorkflowController(this.mapService, this.supplyPersistenceService);
+    window.__supplyWorkflowController = this.supplyWorkflowController; // acceso desde SelWorkSessionController
 
     // Módulo 2
     this.layerLoaderService = new LayerLoaderService();
