@@ -3190,7 +3190,7 @@ class SupplyWorkflowController {
       // Si hay una sesión de trabajo de archivo .sel activa, la serie
       // recién registrada se suma automáticamente al ítem en curso.
       if (window.__selWorkSessionController) {
-        window.__selWorkSessionController.addSerie(this.current.form.medidorSerie, this.current.lineGeoJSON, newSupplyId);
+        await window.__selWorkSessionController.addSerie(this.current.form.medidorSerie, this.current.lineGeoJSON, newSupplyId);
       }
 
       // La línea dibujada queda con sus propios datos adosados (como
@@ -3355,10 +3355,42 @@ class SelFilesController {
   }
 
   async _handleDeleteFile(fileName) {
-    if (!window.confirm(`¿Quitar "${fileName}"?`)) return;
+    if (!window.confirm(`¿Eliminar "${fileName}" por completo? Se borrará el archivo, su progreso registrado, sus suministros guardados y sus líneas del mapa. Los demás archivos NO se ven afectados. Esta acción no se puede deshacer.`)) return;
+
+    // 1) Si había progreso guardado para este archivo, se borran los
+    // suministros y líneas que le pertenecen (y solo esos).
+    if (this.workSessionPersistenceService) {
+      const saved = await this.workSessionPersistenceService.loadProgress(fileName);
+      if (saved && saved.groups) {
+        const supplyIds = [];
+        saved.groups.forEach((g) => {
+          (g.series || []).forEach((entry) => {
+            const id = typeof entry === 'object' ? entry.supplyId : null;
+            if (id != null) supplyIds.push(id);
+          });
+        });
+        for (const id of supplyIds) {
+          if (this.supplyPersistenceService) await this.supplyPersistenceService.deleteSupply(id);
+          if (window.__supplyWorkflowController) window.__supplyWorkflowController.removeLineForSupply(id);
+        }
+      }
+
+      await this.workSessionPersistenceService.deleteProgress(fileName);
+
+      // Si este archivo era el que estaba "en trabajo" ahora mismo,
+      // se apaga el badge y se limpia la sesión visible.
+      const activeFile = await this.workSessionPersistenceService.getActiveFile();
+      if (activeFile === fileName) {
+        await this.workSessionPersistenceService.clearActiveFile();
+        if (window.__selWorkSessionController) window.__selWorkSessionController.resetSessionUI();
+      }
+    }
+
+    // 2) Se borra el archivo .sel en sí.
     await this.persistenceService.deleteFile(fileName);
     this.openNames.delete(fileName);
     await this._renderFromStorage();
+    this._toast(`✓ "${fileName}" y todo su trabajo fueron eliminados.`);
   }
 
   async _handleClearAll() {
@@ -3607,6 +3639,15 @@ class SelWorkSessionPersistenceService {
       tx.objectStore(this.metaStore).clear();
     } catch (err) { /* silencioso */ }
   }
+
+  /** Borra el progreso guardado de UN SOLO archivo, sin tocar los demás. */
+  async deleteProgress(fileName) {
+    try {
+      const db = await this.dbPromise;
+      const tx = db.transaction(this.progressStore, 'readwrite');
+      tx.objectStore(this.progressStore).delete(fileName);
+    } catch (err) { /* silencioso */ }
+  }
 }
 
 class SelWorkSessionController {
@@ -3679,36 +3720,36 @@ class SelWorkSessionController {
 
     await this.persistenceService.setActiveFile(fileName);
     this._updateBadge();
-    this._persist();
+    await this._persist();
   }
 
   /** Se llama automáticamente cada vez que se guarda un suministro. */
-  addSerie(serie, lineGeoJSON, supplyId) {
+  async addSerie(serie, lineGeoJSON, supplyId) {
     if (!this.isActive() || !serie) return;
     const group = this.groups[this.activeGroupIndex];
     if (group) group.series.push({ value: serie, line: lineGeoJSON || null, supplyId: supplyId ?? null });
     this._updateBadge();
-    this._persist();
+    await this._persist();
   }
 
-  _advanceGroup() {
+  async _advanceGroup() {
     if (this.activeGroupIndex < this.groups.length - 1) {
       this.activeGroupIndex++;
       this._updateBadge();
       this._renderTracker();
-      this._persist();
+      await this._persist();
       this._toast(`Ítem ${this.activeGroupIndex + 1} de ${this.groups.length}`);
     } else {
       this._toast('Ya estás en el último ítem de este archivo.');
     }
   }
 
-  _selectGroup(gi) {
+  async _selectGroup(gi) {
     if (gi < 0 || gi >= this.groups.length || gi === this.activeGroupIndex) return;
     this.activeGroupIndex = gi;
     this._updateBadge();
     this._renderTracker();
-    this._persist();
+    await this._persist();
     this._toast(`Trabajando ahora en el ítem ${gi + 1} de ${this.groups.length}`);
   }
 
@@ -3760,7 +3801,7 @@ class SelWorkSessionController {
     const supplyId = typeof entry === 'object' ? entry.supplyId : null;
 
     group.series.splice(si, 1);
-    this._persist();
+    await this._persist(); // se ESPERA a que el borrado quede guardado, antes de seguir
     this._updateBadge();
     this._renderTracker();
 
@@ -3818,7 +3859,7 @@ class SelWorkSessionController {
     const line = this._serieLine(entry);
     const supplyId = typeof entry === 'object' ? entry.supplyId : null;
     this.groups[gi].series[si] = { value, line, supplyId, edited: true };
-    this._persist();
+    await this._persist();
 
     if (supplyId != null) {
       // Se guarda también en el propio suministro (no solo en la
@@ -4359,6 +4400,7 @@ class AppController {
     this.selWorkSessionController = new SelWorkSessionController(this.selWorkSessionPersistenceService, this.mapService, this.supplyPersistenceService);
     window.__selWorkSessionController = this.selWorkSessionController; // acceso desde SupplyWorkflowController
     this.selFilesController.workSessionPersistenceService = this.selWorkSessionPersistenceService; // para pintar los archivos ya trabajados
+    this.selFilesController.supplyPersistenceService = this.supplyPersistenceService; // para borrar suministros y líneas al eliminar un archivo
 
     this.selFilesController.onWorkWithFile = async (fileName, content) => {
       const groups = this.selFilesController.parseGroups(content);
