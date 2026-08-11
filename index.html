@@ -608,7 +608,7 @@
   .serie-edit-input:focus{ border-color:var(--hivis); outline:none; }
 
   .serie-row-full{
-    border:1.5px solid var(--line); border-radius:8px; padding:8px; background:#12161c;
+    border:1.5px solid var(--line); border-radius:8px; background:#12161c; overflow:hidden;
   }
   /* Marca PERMANENTE (no solo al tocar) para filas con algo corregido a mano: serie, fase o fotos */
   .serie-row-full.edited{
@@ -618,6 +618,32 @@
   .serie-row-full.edited .fase-edit-select{
     border-color:var(--ok); color:var(--ok);
   }
+  .serie-row-full.edited .serie-row-value{ color:var(--ok); }
+
+  /* Encabezado: siempre visible, compacto — solo número + serie */
+  .serie-row-header{
+    display:flex; align-items:center; gap:8px; padding:9px 10px; cursor:pointer;
+  }
+  .serie-row-num{
+    font-family:var(--mono); font-size:10px; color:var(--text-dim);
+    background:#0e1116; border-radius:5px; padding:2px 6px; flex-shrink:0;
+  }
+  .serie-row-value{
+    flex:1; font-family:var(--mono); font-size:11px; color:var(--text);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .serie-row-chevron{
+    width:14px; height:14px; stroke:var(--text-dim); fill:none; stroke-width:2;
+    transition:transform .2s; flex-shrink:0;
+  }
+  .serie-row-full.open .serie-row-chevron{ transform:rotate(180deg); }
+
+  /* Cuerpo editable: oculto por defecto, solo aparece al desplegar */
+  .serie-row-body{
+    display:none; padding:0 10px 10px; border-top:1px solid var(--line);
+  }
+  .serie-row-full.open .serie-row-body{ display:block; padding-top:9px; }
+
   .serie-line1{ display:flex; align-items:center; gap:6px; margin-bottom:8px; }
   .serie-line1 .serie-edit-input{ flex:1; }
   .btn-delete-serie{
@@ -3593,6 +3619,7 @@ class SelWorkSessionController {
     this.groups = []; // [{ selCode, tipo, series: [{ value, line, supplyId }] }]
     this.activeGroupIndex = 0;
     this.suppliesCache = new Map(); // id de suministro -> registro completo (Fase, fotos, etc.)
+    this.openSeriesRows = new Set(); // qué filas de serie están desplegadas (ej: "0-2"), para no cerrarlas al re-renderizar
 
     this.counterEl = document.getElementById('supply-counter');
     this.badge = document.getElementById('sel-session-badge');
@@ -4162,15 +4189,25 @@ ${placemarks.join('\n')}
             </label>`;
           }
 
-          rowsHtml += `<tr><td>${si + 1}</td><td colspan="2">
-            <div class="serie-row-full${editedClass}">
-              <div class="serie-line1">
-                <input type="text" class="serie-edit-input" data-group="${gi}" data-serie="${si}" value="${this._escape(this._serieValue(serie))}" />
-                <button class="btn-delete-serie" data-group="${gi}" data-serie="${si}" title="Borrar esta serie">🗑</button>
+          const rowKey = `${gi}-${si}`;
+          const isOpen = this.openSeriesRows.has(rowKey);
+
+          rowsHtml += `<tr><td colspan="3" style="padding:0 6px 8px;">
+            <div class="serie-row-full${editedClass}${isOpen ? ' open' : ''}" data-key="${rowKey}">
+              <div class="serie-row-header">
+                <span class="serie-row-num">${si + 1}</span>
+                <span class="serie-row-value">${this._escape(this._serieValue(serie))}</span>
+                <svg class="serie-row-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
               </div>
-              <div class="serie-line2">
-                <select class="fase-edit-select" data-group="${gi}" data-serie="${si}">${faseOptions}</select>
-                <div class="fotos-mini">${photosHtml}</div>
+              <div class="serie-row-body">
+                <div class="serie-line1">
+                  <input type="text" class="serie-edit-input" data-group="${gi}" data-serie="${si}" value="${this._escape(this._serieValue(serie))}" />
+                  <button class="btn-delete-serie" data-group="${gi}" data-serie="${si}" title="Borrar esta serie">🗑</button>
+                </div>
+                <div class="serie-line2">
+                  <select class="fase-edit-select" data-group="${gi}" data-serie="${si}">${faseOptions}</select>
+                  <div class="fotos-mini">${photosHtml}</div>
+                </div>
               </div>
             </div>
           </td></tr>`;
@@ -4189,6 +4226,19 @@ ${placemarks.join('\n')}
     // grupo correspondiente (por si se ingresó mal un número), y
     // queda marcada en verde de forma PERMANENTE (no solo al tocarla)
     // — incluida la línea en el mapa, igual que con Fase y Foto.
+    // Cada fila es un acordeón: colapsada por defecto (solo número +
+    // serie), se despliega al tocarla para editar Fase/Fotos/Borrar
+    // — así la pantalla no se llena y se evita tocar el basurero sin querer.
+    this.tableWrap.querySelectorAll('.serie-row-header').forEach((header) => {
+      header.addEventListener('click', () => {
+        const row = header.closest('.serie-row-full');
+        const key = row.dataset.key;
+        row.classList.toggle('open');
+        if (row.classList.contains('open')) this.openSeriesRows.add(key);
+        else this.openSeriesRows.delete(key);
+      });
+    });
+
     this.tableWrap.querySelectorAll('.serie-edit-input').forEach((input) => {
       input.addEventListener('change', async (e) => {
         const gi = Number(e.target.dataset.group);
