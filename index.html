@@ -1028,11 +1028,17 @@
         <div id="coords-decimal-fields" style="display:none;">
           <div class="supply-field">
             <label>Latitud</label>
-            <input type="number" step="any" id="dec-lat" placeholder="Ej. -15.8402" />
+            <div style="display:flex; gap:6px;">
+              <input type="text" inputmode="decimal" pattern="-?[0-9]*\.?[0-9]*" id="dec-lat" placeholder="Ej. -15.8402" style="flex:1;" />
+              <button type="button" id="btn-toggle-lat-sign" title="Cambiar signo (+/-)" style="flex-shrink:0; width:42px; background:#0e1116; border:1px solid var(--line); border-radius:9px; color:var(--hivis); font-weight:700; font-size:14px;">±</button>
+            </div>
           </div>
           <div class="supply-field">
             <label>Longitud</label>
-            <input type="number" step="any" id="dec-lon" placeholder="Ej. -70.0219" />
+            <div style="display:flex; gap:6px;">
+              <input type="text" inputmode="decimal" pattern="-?[0-9]*\.?[0-9]*" id="dec-lon" placeholder="Ej. -70.0219" style="flex:1;" />
+              <button type="button" id="btn-toggle-lon-sign" title="Cambiar signo (+/-)" style="flex-shrink:0; width:42px; background:#0e1116; border:1px solid var(--line); border-radius:9px; color:var(--hivis); font-weight:700; font-size:14px;">±</button>
+            </div>
           </div>
         </div>
 
@@ -4549,6 +4555,17 @@ class GotoCoordinatesController {
     this.btnClose.addEventListener('click', () => this.modal.classList.remove('show'));
     this.tabs.forEach((tab) => tab.addEventListener('click', () => this._switchMode(tab.dataset.mode)));
     this.btnSubmit.addEventListener('click', () => this._submit());
+
+    // Botones +/-: respaldo garantizado para escribir negativos, sin
+    // depender de que el teclado del celular muestre el signo menos.
+    document.getElementById('btn-toggle-lat-sign').addEventListener('click', () => this._toggleSign(this.decLat));
+    document.getElementById('btn-toggle-lon-sign').addEventListener('click', () => this._toggleSign(this.decLon));
+  }
+
+  _toggleSign(input) {
+    const val = parseFloat(input.value);
+    if (isNaN(val)) return;
+    input.value = -val;
   }
 
   _open() {
