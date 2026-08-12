@@ -4530,10 +4530,12 @@ ${placemarks.join('\n')}
 // la fórmula estándar, sin depender de ninguna librería externa.
 // ---------------------------------------------------------------
 class GotoCoordinatesController {
-  constructor(mapService) {
+  constructor(mapService, geoService) {
     this.map = mapService.getMap();
+    this.geoService = geoService;
     this.mode = 'utm';
     this.marker = null;
+    this.connectorLine = null;
 
     this.btnToggle = document.getElementById('btn-goto-coords');
     this.modal = document.getElementById('goto-coords-modal');
@@ -4611,10 +4613,46 @@ class GotoCoordinatesController {
 
   _goTo(lat, lon) {
     if (this.marker) this.map.removeLayer(this.marker);
+    if (this.connectorLine) this.map.removeLayer(this.connectorLine);
+
     this.marker = L.circleMarker([lat, lon], {
       radius: 12, color: '#E4572E', weight: 3, fillColor: '#E4572E', fillOpacity: 0.25,
     }).addTo(this.map);
-    this.map.setView([lat, lon], 19);
+
+    // Si hay una posición GPS actual conocida, se muestran AMBOS
+    // puntos juntos en el mapa (ajustando el zoom para que entren
+    // los dos), con una línea que los conecta y la distancia real
+    // entre ellos.
+    const myPos = this.geoService && this.geoService.lastPosition;
+    if (myPos) {
+      const myLatLng = L.latLng(myPos.coords.latitude, myPos.coords.longitude);
+      const targetLatLng = L.latLng(lat, lon);
+      const distanceMeters = myLatLng.distanceTo(targetLatLng);
+
+      this.connectorLine = L.polyline([myLatLng, targetLatLng], {
+        color: '#22D3EE', weight: 2, dashArray: '6,6', opacity: 0.8,
+      }).addTo(this.map);
+
+      const bounds = L.latLngBounds([myLatLng, targetLatLng]);
+      this.map.fitBounds(bounds, { padding: [60, 60], maxZoom: 18 });
+
+      const distanceLabel = distanceMeters >= 1000
+        ? `${(distanceMeters / 1000).toFixed(2)} km`
+        : `${Math.round(distanceMeters)} m`;
+      this._toast(`📍 Estás a ${distanceLabel} de este punto.`);
+    } else {
+      // Sin posición GPS todavía disponible: solo se centra en el destino.
+      this.map.setView([lat, lon], 19);
+    }
+  }
+
+  _toast(msg) {
+    const el = document.getElementById('toast');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => el.classList.remove('show'), 4000);
   }
 
   /** Conversión UTM (WGS84) a latitud/longitud — fórmula estándar de Snyder. */
@@ -4670,7 +4708,7 @@ class AppController {
     this.geoService = new GeolocationService();
     this.uiController = new UIController(this.mapService, this.geoService);
     this.basemapToggleController = new BasemapToggleController(this.mapService);
-    this.gotoCoordinatesController = new GotoCoordinatesController(this.mapService);
+    this.gotoCoordinatesController = new GotoCoordinatesController(this.mapService, this.geoService);
 
     // Módulo de registro de suministro (acometida → escaneo → forma → fotos)
     this.supplyPersistenceService = new SupplyPersistenceService();
