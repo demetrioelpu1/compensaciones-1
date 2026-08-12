@@ -4595,7 +4595,7 @@ class GotoCoordinatesController {
   _goTo(lat, lon) {
     if (this.marker) this.map.removeLayer(this.marker);
     this.marker = L.circleMarker([lat, lon], {
-      radius: 12, color: '#22D3EE', weight: 3, fillColor: '#22D3EE', fillOpacity: 0.25,
+      radius: 12, color: '#E4572E', weight: 3, fillColor: '#E4572E', fillOpacity: 0.25,
     }).addTo(this.map);
     this.map.setView([lat, lon], 19);
   }
