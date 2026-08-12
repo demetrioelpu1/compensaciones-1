@@ -118,6 +118,43 @@
     transition:background .15s, border-color .15s;
   }
   #btn-locate:active{ background:#282e38; }
+
+  /* Botón "Ir a coordenadas": celeste brillante, esquina superior
+     derecha (zona libre), fácil de encontrar de un vistazo */
+  #btn-goto-coords{
+    position:absolute; top:14px; right:14px;
+    width:46px; height:46px; border-radius:10px;
+    background:#22D3EE; border:2px solid #0e1116;
+    color:#0e1116; display:flex; align-items:center; justify-content:center;
+    cursor:pointer; z-index:950;
+    box-shadow:0 4px 16px rgba(34,211,238,.55);
+  }
+  #btn-goto-coords:active{ background:#67e8f9; }
+  #btn-goto-coords svg{ width:24px; height:24px; stroke:#0e1116; fill:none; stroke-width:2.3; }
+
+  #goto-coords-modal{
+    display:none; position:fixed; inset:0; z-index:2200;
+    background:rgba(0,0,0,.65); align-items:center; justify-content:center; padding:20px;
+  }
+  #goto-coords-modal.show{ display:flex; }
+  #goto-coords-card{
+    background:var(--bar-bg-2); border:1px solid var(--line); border-radius:14px;
+    max-width:320px; width:100%; padding:18px;
+  }
+  #goto-coords-card .head{
+    display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;
+  }
+  #goto-coords-card .head h3{ font-size:14px; margin:0; color:var(--text); }
+  .coords-tabs{ display:flex; gap:6px; margin-bottom:14px; }
+  .coords-tab{
+    flex:1; background:#0e1116; border:1px solid var(--line); color:var(--text-dim);
+    border-radius:8px; padding:8px 0; font-size:11.5px; font-weight:600; cursor:pointer;
+  }
+  .coords-tab.active{ background:#22D3EE; color:#0e1116; border-color:#22D3EE; }
+  #btn-goto-submit{
+    width:100%; margin-top:6px; background:#22D3EE; color:#0e1116; border:none;
+    border-radius:9px; padding:12px 0; font-weight:700; font-size:13px; cursor:pointer;
+  }
   #btn-locate.following{
     background:var(--hivis); border-color:var(--hivis);
   }
@@ -947,6 +984,62 @@
   <div id="map-wrap">
     <div id="map"></div>
     <div id="toast"></div>
+
+    <button id="btn-goto-coords" title="Ir a coordenadas">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+    </button>
+
+    <div id="goto-coords-modal">
+      <div id="goto-coords-card">
+        <div class="head">
+          <h3>Ir a coordenadas</h3>
+          <button class="close-x" id="btn-close-goto-coords">✕</button>
+        </div>
+
+        <div class="coords-tabs">
+          <button class="coords-tab active" data-mode="utm">UTM</button>
+          <button class="coords-tab" data-mode="decimal">Decimal (Lat/Lon)</button>
+        </div>
+
+        <div id="coords-utm-fields">
+          <div class="supply-field">
+            <label>Este (X)</label>
+            <input type="number" step="any" id="utm-x" placeholder="Ej. 390245" />
+          </div>
+          <div class="supply-field">
+            <label>Norte (Y)</label>
+            <input type="number" step="any" id="utm-y" placeholder="Ej. 8244551" />
+          </div>
+          <div class="phase-compare">
+            <div>
+              <label style="font-weight:400;text-transform:none;font-size:9.5px;">Zona</label>
+              <input type="number" id="utm-zone" value="19" />
+            </div>
+            <div>
+              <label style="font-weight:400;text-transform:none;font-size:9.5px;">Hemisferio</label>
+              <select id="utm-hemisphere">
+                <option value="S" selected>Sur</option>
+                <option value="N">Norte</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div id="coords-decimal-fields" style="display:none;">
+          <div class="supply-field">
+            <label>Latitud</label>
+            <input type="number" step="any" id="dec-lat" placeholder="Ej. -15.8402" />
+          </div>
+          <div class="supply-field">
+            <label>Longitud</label>
+            <input type="number" step="any" id="dec-lon" placeholder="Ej. -70.0219" />
+          </div>
+        </div>
+
+        <div class="supply-form-error" id="goto-coords-error">Ingresa ambos valores antes de continuar.</div>
+        <button id="btn-goto-submit">📍 Ir a esta ubicación</button>
+      </div>
+    </div>
 
     <button id="btn-locate" title="Centrar y seguir mi ubicación">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
@@ -4424,12 +4517,143 @@ ${placemarks.join('\n')}
   }
 }
 
+// ---------------------------------------------------------------
+// GotoCoordinatesController: permite ubicar rápido un punto de
+// trabajo escribiendo coordenadas UTM (Este/Norte + zona) o
+// decimales (Latitud/Longitud). Convierte UTM a lat/lon (WGS84) con
+// la fórmula estándar, sin depender de ninguna librería externa.
+// ---------------------------------------------------------------
+class GotoCoordinatesController {
+  constructor(mapService) {
+    this.map = mapService.getMap();
+    this.mode = 'utm';
+    this.marker = null;
+
+    this.btnToggle = document.getElementById('btn-goto-coords');
+    this.modal = document.getElementById('goto-coords-modal');
+    this.btnClose = document.getElementById('btn-close-goto-coords');
+    this.tabs = Array.from(document.querySelectorAll('.coords-tab'));
+    this.utmFields = document.getElementById('coords-utm-fields');
+    this.decimalFields = document.getElementById('coords-decimal-fields');
+    this.errorEl = document.getElementById('goto-coords-error');
+    this.btnSubmit = document.getElementById('btn-goto-submit');
+
+    this.utmX = document.getElementById('utm-x');
+    this.utmY = document.getElementById('utm-y');
+    this.utmZone = document.getElementById('utm-zone');
+    this.utmHemisphere = document.getElementById('utm-hemisphere');
+    this.decLat = document.getElementById('dec-lat');
+    this.decLon = document.getElementById('dec-lon');
+
+    this.btnToggle.addEventListener('click', () => this._open());
+    this.btnClose.addEventListener('click', () => this.modal.classList.remove('show'));
+    this.tabs.forEach((tab) => tab.addEventListener('click', () => this._switchMode(tab.dataset.mode)));
+    this.btnSubmit.addEventListener('click', () => this._submit());
+  }
+
+  _open() {
+    this.errorEl.classList.remove('show');
+    this.modal.classList.add('show');
+  }
+
+  _switchMode(mode) {
+    this.mode = mode;
+    this.tabs.forEach((tab) => tab.classList.toggle('active', tab.dataset.mode === mode));
+    this.utmFields.style.display = mode === 'utm' ? 'block' : 'none';
+    this.decimalFields.style.display = mode === 'decimal' ? 'block' : 'none';
+  }
+
+  _submit() {
+    let lat, lon;
+
+    if (this.mode === 'utm') {
+      const x = parseFloat(this.utmX.value);
+      const y = parseFloat(this.utmY.value);
+      const zone = parseInt(this.utmZone.value, 10);
+      const isSouth = this.utmHemisphere.value === 'S';
+      if (isNaN(x) || isNaN(y) || isNaN(zone)) {
+        this.errorEl.classList.add('show');
+        return;
+      }
+      const result = this._utmToLatLon(x, y, zone, isSouth);
+      lat = result.lat;
+      lon = result.lon;
+    } else {
+      lat = parseFloat(this.decLat.value);
+      lon = parseFloat(this.decLon.value);
+      if (isNaN(lat) || isNaN(lon)) {
+        this.errorEl.classList.add('show');
+        return;
+      }
+    }
+
+    this.errorEl.classList.remove('show');
+    this._goTo(lat, lon);
+    this.modal.classList.remove('show');
+  }
+
+  _goTo(lat, lon) {
+    if (this.marker) this.map.removeLayer(this.marker);
+    this.marker = L.circleMarker([lat, lon], {
+      radius: 12, color: '#22D3EE', weight: 3, fillColor: '#22D3EE', fillOpacity: 0.25,
+    }).addTo(this.map);
+    this.map.setView([lat, lon], 19);
+  }
+
+  /** Conversión UTM (WGS84) a latitud/longitud — fórmula estándar de Snyder. */
+  _utmToLatLon(easting, northing, zone, isSouth) {
+    const a = 6378137.0;
+    const eccSquared = 0.00669438;
+    const e1 = (1 - Math.sqrt(1 - eccSquared)) / (1 + Math.sqrt(1 - eccSquared));
+    const k0 = 0.9996;
+
+    const x = easting - 500000.0;
+    let y = northing;
+    if (isSouth) y -= 10000000.0;
+
+    const longOrigin = (zone - 1) * 6 - 180 + 3;
+    const longOriginRad = (longOrigin * Math.PI) / 180;
+    const eccPrimeSquared = eccSquared / (1 - eccSquared);
+
+    const M = y / k0;
+    const mu = M / (a * (1 - eccSquared / 4 - (3 * eccSquared * eccSquared) / 64 - (5 * Math.pow(eccSquared, 3)) / 256));
+
+    const phi1Rad = mu
+      + ((3 * e1) / 2 - (27 * Math.pow(e1, 3)) / 32) * Math.sin(2 * mu)
+      + ((21 * e1 * e1) / 16 - (55 * Math.pow(e1, 4)) / 32) * Math.sin(4 * mu)
+      + ((151 * Math.pow(e1, 3)) / 96) * Math.sin(6 * mu);
+
+    const N1 = a / Math.sqrt(1 - eccSquared * Math.sin(phi1Rad) * Math.sin(phi1Rad));
+    const T1 = Math.tan(phi1Rad) * Math.tan(phi1Rad);
+    const C1 = eccPrimeSquared * Math.cos(phi1Rad) * Math.cos(phi1Rad);
+    const R1 = (a * (1 - eccSquared)) / Math.pow(1 - eccSquared * Math.sin(phi1Rad) * Math.sin(phi1Rad), 1.5);
+    const D = x / (N1 * k0);
+
+    let lat = phi1Rad
+      - ((N1 * Math.tan(phi1Rad)) / R1)
+        * ((D * D) / 2
+          - ((5 + 3 * T1 + 10 * C1 - 4 * C1 * C1 - 9 * eccPrimeSquared) * Math.pow(D, 4)) / 24
+          + ((61 + 90 * T1 + 298 * C1 + 45 * T1 * T1 - 252 * eccPrimeSquared - 3 * C1 * C1) * Math.pow(D, 6)) / 720);
+    lat = (lat * 180) / Math.PI;
+
+    let lon = (D
+      - ((1 + 2 * T1 + C1) * Math.pow(D, 3)) / 6
+      + ((5 - 2 * C1 + 28 * T1 - 3 * C1 * C1 + 8 * eccPrimeSquared + 24 * T1 * T1) * Math.pow(D, 5)) / 120)
+      / Math.cos(phi1Rad);
+    lon = longOriginRad + lon;
+    lon = (lon * 180) / Math.PI;
+
+    return { lat, lon };
+  }
+}
+
 class AppController {
   constructor() {
     this.mapService = new MapService('map');
     this.geoService = new GeolocationService();
     this.uiController = new UIController(this.mapService, this.geoService);
     this.basemapToggleController = new BasemapToggleController(this.mapService);
+    this.gotoCoordinatesController = new GotoCoordinatesController(this.mapService);
 
     // Módulo de registro de suministro (acometida → escaneo → forma → fotos)
     this.supplyPersistenceService = new SupplyPersistenceService();
