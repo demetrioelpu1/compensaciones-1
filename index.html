@@ -468,6 +468,16 @@
   /* Popup de la línea de acometida: más ancho que el de Subestaciones
      para que "Suministro de origen" no se parta en varias líneas */
   .acometida-popup{ max-width:280px; }
+
+  /* Etiqueta con el número de ítem, colocada sobre el segundo punto
+     de cada línea de acometida para identificarla en el mapa */
+  .acometida-number-label{
+    width:22px; height:22px; border-radius:50%;
+    background:var(--hivis); color:#181c22; border:2px solid #181c22;
+    font-family:var(--sans); font-weight:800; font-size:11px;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 2px 6px rgba(0,0,0,.5);
+  }
   .acometida-popup .title{ font-weight:700; font-size:13px; margin-bottom:8px; color:var(--text); }
   .acometida-popup table{ border-collapse:collapse; font-size:12px; width:100%; }
   .acometida-popup td{ padding:5px 0; vertical-align:top; word-break:break-word; color:var(--text); }
@@ -3078,6 +3088,27 @@ class SupplyWorkflowController {
   _onLineFinished(lineGeoJSON, lineLayer) {
     this.current.lineGeoJSON = lineGeoJSON;
     this.current.lineLayer = lineLayer;
+
+    // Etiqueta con el número que le corresponderá en la tabla —
+    // colocada sobre el segundo punto (el final) de la línea, para
+    // poder identificar cada acometida de un vistazo en el mapa.
+    const wsc = window.__selWorkSessionController;
+    if (wsc && wsc.isActive()) {
+      const activeGroup = wsc.groups[wsc.activeGroupIndex];
+      if (activeGroup) {
+        const labelNumber = activeGroup.nextItemNumber || 1;
+        const latlngs = lineLayer.getLatLngs();
+        const endPoint = latlngs[latlngs.length - 1];
+        const labelIcon = L.divIcon({
+          className: '',
+          html: `<div class="acometida-number-label">${labelNumber}</div>`,
+          iconSize: [24, 24],
+          iconAnchor: [12, 12],
+        });
+        this.current.numberLabel = L.marker(endPoint, { icon: labelIcon, interactive: false }).addTo(this.sketchLayerGroup);
+      }
+    }
+
     this.scanPromptBanner.classList.add('show');
   }
 
@@ -3217,7 +3248,7 @@ class SupplyWorkflowController {
           color: '#000', opacity: 0, weight: 24,
         }).bindPopup(popupHtml, popupOpts).addTo(this.sketchLayerGroup);
 
-        this.lineLayersBySupplyId.set(newSupplyId, { main: this.current.lineLayer, hit: hitLine });
+        this.lineLayersBySupplyId.set(newSupplyId, { main: this.current.lineLayer, hit: hitLine, label: this.current.numberLabel });
       }
 
       this.photoModal.classList.remove('show');
@@ -3229,6 +3260,11 @@ class SupplyWorkflowController {
 
   // --- Utilidades ----------------------------------------------------
   _resetToStart() {
+    // Si se cancela después de dibujar pero antes de guardar, se
+    // quita la etiqueta numerada temporal para no dejarla huérfana.
+    if (this.current && this.current.numberLabel) {
+      this.sketchLayerGroup.removeLayer(this.current.numberLabel);
+    }
     this.current = null;
     this.scanPromptBanner.classList.remove('show');
     this.scanResultModal.classList.remove('show');
@@ -3243,6 +3279,7 @@ class SupplyWorkflowController {
     if (!entry) return false;
     if (entry.main) this.sketchLayerGroup.removeLayer(entry.main);
     if (entry.hit) this.sketchLayerGroup.removeLayer(entry.hit);
+    if (entry.label) this.sketchLayerGroup.removeLayer(entry.label);
     this.lineLayersBySupplyId.delete(supplyId);
     return true;
   }
@@ -3735,7 +3772,13 @@ class SelWorkSessionController {
   async addSerie(serie, lineGeoJSON, supplyId) {
     if (!this.isActive() || !serie) return;
     const group = this.groups[this.activeGroupIndex];
-    if (group) group.series.push({ value: serie, line: lineGeoJSON || null, supplyId: supplyId ?? null });
+    if (group) {
+      if (!group.nextItemNumber) group.nextItemNumber = 1;
+      group.series.push({
+        value: serie, line: lineGeoJSON || null, supplyId: supplyId ?? null,
+        itemNumber: group.nextItemNumber++, // número PERMANENTE, nunca se reutiliza aunque se borre
+      });
+    }
     this._updateBadge();
     await this._persist();
   }
@@ -3962,6 +4005,7 @@ class SelWorkSessionController {
         const entry = g.series[i];
         const value = this._serieValue(entry);
         const supplyId = typeof entry === 'object' ? entry.supplyId : null;
+        const itemNumber = (typeof entry === 'object' && entry.itemNumber) ? entry.itemNumber : i + 1;
         const folderName = `${value}`.replace(/[^a-zA-Z0-9_-]/g, '_');
 
         const supply = supplyId != null ? allSupplies.find((s) => s.id === supplyId) : null;
@@ -3972,7 +4016,7 @@ class SelWorkSessionController {
           });
         }
 
-        rows.push([g.selCode, tipoLabel, i + 1, value, folderName + '/']);
+        rows.push([g.selCode, tipoLabel, itemNumber, value, folderName + '/']);
       }
     }
 
@@ -4038,7 +4082,7 @@ class SelWorkSessionController {
           geometry: line.geometry,
           properties: {
             SEL: g.selCode,
-            Item: i + 1,
+            Item: (typeof entry === 'object' && entry.itemNumber) ? entry.itemNumber : i + 1,
             Serie: value,
             Fase: fase,
             Tipo: tipoLabel,
@@ -4108,7 +4152,7 @@ class SelWorkSessionController {
       ]]></description>
       <ExtendedData>
         <Data name="SEL"><value>${this._escapeXml(g.selCode)}</value></Data>
-        <Data name="Item"><value>${i + 1}</value></Data>
+        <Data name="Item"><value>${(typeof entry === 'object' && entry.itemNumber) ? entry.itemNumber : i + 1}</value></Data>
         <Data name="Serie"><value>${this._escapeXml(value)}</value></Data>
         <Data name="Fase"><value>${this._escapeXml(fase)}</value></Data>
         <Data name="Tipo"><value>${this._escapeXml(tipoLabel)} (${g.tipo})</value></Data>
@@ -4240,11 +4284,12 @@ ${placemarks.join('\n')}
 
           const rowKey = `${gi}-${si}`;
           const isOpen = this.openSeriesRows.has(rowKey);
+          const displayNumber = (typeof serie === 'object' && serie.itemNumber) ? serie.itemNumber : si + 1;
 
           rowsHtml += `<tr><td colspan="3" style="padding:0 6px 8px;">
             <div class="serie-row-full${editedClass}${isOpen ? ' open' : ''}" data-key="${rowKey}">
               <div class="serie-row-header">
-                <span class="serie-row-num">${si + 1}</span>
+                <span class="serie-row-num">${displayNumber}</span>
                 <span class="serie-row-value">${this._escape(this._serieValue(serie))}</span>
                 <svg class="serie-row-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
               </div>
