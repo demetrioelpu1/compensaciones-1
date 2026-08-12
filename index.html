@@ -4630,7 +4630,7 @@ class GotoCoordinatesController {
       const distanceMeters = myLatLng.distanceTo(targetLatLng);
 
       this.connectorLine = L.polyline([myLatLng, targetLatLng], {
-        color: '#22D3EE', weight: 2, dashArray: '6,6', opacity: 0.8,
+        color: '#E930FF', weight: 4, dashArray: '8,8', opacity: 0.9,
       }).addTo(this.map);
 
       const bounds = L.latLngBounds([myLatLng, targetLatLng]);
