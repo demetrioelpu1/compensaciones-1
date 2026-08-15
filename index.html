@@ -4328,10 +4328,10 @@ class SelWorkSessionController {
     const allSupplies = this.supplyPersistenceService ? await this.supplyPersistenceService.getAll() : [];
 
     for (const g of this.groups) {
-      const tipoLabel = g.tipo === '1' ? 'Sobretensión (1)' : 'Subtensión (0)';
+      const tipoValue = g.tipo; // Excel: solo el número (1 o 0), no el texto completo
 
       if (!g.series.length) {
-        rows.push(['', g.selCode, '', tipoLabel, '', '']);
+        rows.push(['', g.selCode, '', tipoValue, '', '']);
         continue;
       }
 
@@ -4350,7 +4350,7 @@ class SelWorkSessionController {
           });
         }
 
-        rows.push([itemNumber, g.selCode, value, tipoLabel, supply?.comment || '', folderName + '/']);
+        rows.push([itemNumber, g.selCode, value, tipoValue, supply?.comment || '', folderName + '/']);
       }
     }
 
