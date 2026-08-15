@@ -3277,9 +3277,10 @@ class SupplyWorkflowController {
         const labelNumber = activeGroup.nextItemNumber || 1;
         const latlngs = lineLayer.getLatLngs();
         const endPoint = latlngs[latlngs.length - 1];
+        const bgColor = wsc.fileColor || '#00E676';
         const labelIcon = L.divIcon({
           className: '',
-          html: `<div class="acometida-number-label">${labelNumber}</div>`,
+          html: `<div class="acometida-number-label" style="background:${bgColor};">${labelNumber}</div>`,
           iconSize: [24, 24],
           iconAnchor: [12, 12],
         });
@@ -3546,6 +3547,7 @@ class SupplyWorkflowController {
     // el número en el popup y recrear el círculo numerado en el
     // mapa (antes se perdía al cerrar y volver a abrir la app).
     const itemNumberMap = new Map();
+    const labelColorMap = new Map(); // suministro -> color del archivo al que pertenece
     if (selWorkSessionPersistenceService && selWorkSessionPersistenceService.getAllProgress) {
       const allProgress = await selWorkSessionPersistenceService.getAllProgress();
       allProgress.forEach((p) => {
@@ -3554,6 +3556,7 @@ class SupplyWorkflowController {
             const id = typeof entry === 'object' ? entry.supplyId : null;
             const num = typeof entry === 'object' ? entry.itemNumber : null;
             if (id != null && num != null) itemNumberMap.set(id, num);
+            if (id != null && p.color) labelColorMap.set(id, p.color);
           });
         });
       });
@@ -3592,9 +3595,10 @@ class SupplyWorkflowController {
       if (itemNumber != null) {
         const coords = s.lineGeoJSON.geometry.coordinates;
         const endCoord = coords[coords.length - 1]; // [lng, lat]
+        const bgColor = labelColorMap.get(s.id) || '#00E676';
         const labelIcon = L.divIcon({
           className: '',
-          html: `<div class="acometida-number-label">${itemNumber}</div>`,
+          html: `<div class="acometida-number-label" style="background:${bgColor};">${itemNumber}</div>`,
           iconSize: [24, 24],
           iconAnchor: [12, 12],
         });
@@ -3838,6 +3842,24 @@ class SelFilesController {
 // ya registradas, ítem activo). Así, si cierras la app a mitad del
 // día, al volver a abrirla todo sigue exactamente donde quedó.
 // ---------------------------------------------------------------
+// Paleta de colores bien distintos entre sí (nada de tonos parecidos)
+// para que cada archivo .sel tenga su propio color reconocible de
+// un vistazo, tanto en los círculos del mapa como en el encabezado
+// de su registro.
+const SEL_FILE_COLOR_PALETTE = [
+  '#22C55E', // verde
+  '#3B82F6', // azul
+  '#22D3EE', // celeste brillante
+  '#D1D5DB', // gris claro
+  '#FACC15', // amarillo
+  '#F9A8D4', // rosa claro
+  '#FFC72C', // amarillo caterpillar
+  '#FFF3D6', // marfil (con calidez, no tan blanco puro)
+  '#FFFFFF', // blanco
+  '#F97316', // naranja
+  '#D946EF', // magenta
+];
+
 class SelWorkSessionPersistenceService {
   constructor() {
     this.dbName = 'cmp-sel-session-db';
@@ -3880,11 +3902,11 @@ class SelWorkSessionPersistenceService {
   }
 
   /** Guarda el progreso de UN archivo específico (se acumula, nunca se pierde). */
-  async saveProgress(fileName, groups, activeGroupIndex) {
+  async saveProgress(fileName, groups, activeGroupIndex, color) {
     try {
       const db = await this.dbPromise;
       const tx = db.transaction(this.progressStore, 'readwrite');
-      tx.objectStore(this.progressStore).put({ fileName, groups, activeGroupIndex });
+      tx.objectStore(this.progressStore).put({ fileName, groups, activeGroupIndex, color });
     } catch (err) { /* silencioso: no interrumpe el trabajo si falla el guardado */ }
   }
 
@@ -4031,17 +4053,31 @@ class SelWorkSessionController {
       this.fileName = fileName;
       this.groups = saved.groups;
       this.activeGroupIndex = saved.activeGroupIndex || 0;
+      this.fileColor = saved.color || (await this._assignNewColor(fileName));
       this._toast(`Continuando con ${fileName} · Ítem ${this.activeGroupIndex + 1} de ${groups.length}`);
     } else {
       this.fileName = fileName;
       this.groups = groups;
       this.activeGroupIndex = 0;
+      this.fileColor = await this._assignNewColor(fileName);
       this._toast(`Trabajando con ${fileName} · Ítem 1 de ${groups.length}`);
     }
 
     await this.persistenceService.setActiveFile(fileName);
     this._updateBadge();
     await this._persist();
+  }
+
+  /** Elige un color de la paleta que ningún OTRO archivo esté usando todavía. */
+  async _assignNewColor(fileName) {
+    const allProgress = await this.persistenceService.getAllProgress();
+    const usedColors = allProgress
+      .filter((p) => p.fileName !== fileName)
+      .map((p) => p.color)
+      .filter(Boolean);
+    const available = SEL_FILE_COLOR_PALETTE.filter((c) => !usedColors.includes(c));
+    const pool = available.length ? available : SEL_FILE_COLOR_PALETTE;
+    return pool[Math.floor(Math.random() * pool.length)];
   }
 
   /** Se llama automáticamente cada vez que se guarda un suministro. */
@@ -4507,7 +4543,7 @@ class SelWorkSessionController {
       return;
     }
     try {
-      await this.persistenceService.saveProgress(this.fileName, this.groups, this.activeGroupIndex);
+      await this.persistenceService.saveProgress(this.fileName, this.groups, this.activeGroupIndex, this.fileColor);
       if (notify) this._toast('✓ Cambios guardados en este celular.');
     } catch (err) {
       this._toast('⚠ No se pudo guardar: ' + (err.message || err));
@@ -4543,10 +4579,24 @@ class SelWorkSessionController {
     this.badgeItem.textContent = this.activeGroupIndex + 1;
     this.badgeTotalItems.textContent = this.groups.length;
     this.badgeSeriesCount.textContent = this.groups[this.activeGroupIndex]?.series.length || 0;
+
+    // El badge se colorea igual que los círculos numerados de este
+    // archivo, para reconocerlo de un vistazo.
+    if (this.fileColor) {
+      this.badge.style.borderColor = this.fileColor;
+      this.badgeFile.style.color = this.fileColor;
+    }
   }
 
   _renderTracker() {
     this.trackerTitle.textContent = this.fileName || '—';
+    if (this.fileColor) {
+      this.trackerTitle.style.color = '#181c22';
+      this.trackerTitle.style.background = this.fileColor;
+      this.trackerTitle.style.padding = '4px 10px';
+      this.trackerTitle.style.borderRadius = '6px';
+      this.trackerTitle.style.display = 'inline-block';
+    }
 
     let rowsHtml = '';
     this.groups.forEach((g, gi) => {
@@ -4635,9 +4685,11 @@ class SelWorkSessionController {
       header.addEventListener('click', () => {
         const row = header.closest('.serie-row-full');
         const key = row.dataset.key;
+        const [gi, si] = key.split('-').map(Number);
         row.classList.toggle('open');
         if (row.classList.contains('open')) this.openSeriesRows.add(key);
         else this.openSeriesRows.delete(key);
+        this._highlightLineForSerie(gi, si); // acerca el mapa a la línea de este ítem
       });
     });
 
