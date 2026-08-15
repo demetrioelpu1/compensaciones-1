@@ -3167,7 +3167,6 @@ class SupplyWorkflowController {
 
     this._bindEvents();
     this._refreshCounter();
-    this._restoreSavedLines();
   }
 
   _bindEvents() {
@@ -3388,15 +3387,21 @@ class SupplyWorkflowController {
 
       // Si hay una sesión de trabajo de archivo .sel activa, la serie
       // recién registrada se suma automáticamente al ítem en curso.
+      let justAssignedItemNumber = null;
       if (window.__selWorkSessionController) {
-        await window.__selWorkSessionController.addSerie(this.current.form.medidorSerie, this.current.lineGeoJSON, newSupplyId);
+        const wsc = window.__selWorkSessionController;
+        await wsc.addSerie(this.current.form.medidorSerie, this.current.lineGeoJSON, newSupplyId);
+        const activeGroup = wsc.groups?.[wsc.activeGroupIndex];
+        const justAdded = activeGroup?.series[activeGroup.series.length - 1];
+        justAssignedItemNumber = justAdded?.itemNumber ?? null;
       }
 
       // La línea dibujada queda con sus propios datos adosados (como
-      // una capa GIS real): al tocarla, muestra Serie, Fase, Tipo y
-      // el suministro (código SEL) de origen.
+      // una capa GIS real): al tocarla, muestra el número de ítem,
+      // Serie, Fase, Tipo y el suministro (código SEL) de origen.
       if (this.current.lineLayer) {
         const rows = [
+          ...(justAssignedItemNumber != null ? [['Ítem', `N.° ${justAssignedItemNumber}`]] : []),
           ['Serie', this.current.form.medidorSerie],
           ['Fase', this.current.form.faseCampo],
           ['Tipo', selTipoLabel || 'N/D'],
@@ -3520,16 +3525,36 @@ class SupplyWorkflowController {
    * reinicie "Compartir desde WhatsApp", las líneas ya trazadas
    * nunca desaparecen.
    */
-  async _restoreSavedLines() {
+  async _restoreSavedLines(selWorkSessionPersistenceService) {
     const supplies = await this.persistenceService.getAll();
+
+    // Mapa suministro -> número de ítem permanente, para poder poner
+    // el número en el popup y recrear el círculo numerado en el
+    // mapa (antes se perdía al cerrar y volver a abrir la app).
+    const itemNumberMap = new Map();
+    if (selWorkSessionPersistenceService && selWorkSessionPersistenceService.getAllProgress) {
+      const allProgress = await selWorkSessionPersistenceService.getAllProgress();
+      allProgress.forEach((p) => {
+        (p.groups || []).forEach((g) => {
+          (g.series || []).forEach((entry) => {
+            const id = typeof entry === 'object' ? entry.supplyId : null;
+            const num = typeof entry === 'object' ? entry.itemNumber : null;
+            if (id != null && num != null) itemNumberMap.set(id, num);
+          });
+        });
+      });
+    }
+
     supplies.forEach((s) => {
       if (!s.lineGeoJSON) return;
+      const itemNumber = itemNumberMap.get(s.id) || null;
       const lineColor = s.edited ? '#2E8B57' : '#E4572E'; // verde si ya fue corregido, rojo normal si no
       const layer = L.geoJSON(s.lineGeoJSON, {
         style: () => ({ color: lineColor, weight: 3, opacity: 0.95 }),
       }).addTo(this.sketchLayerGroup);
 
       const rows = [
+        ...(itemNumber != null ? [['Ítem', `N.° ${itemNumber}`]] : []),
         ['Serie', s.form?.medidorSerie || 'N/D'],
         ['Fase', s.form?.faseCampo || 'N/D'],
         ['Tipo', s.selTipoLabel || 'N/D'],
@@ -3547,7 +3572,22 @@ class SupplyWorkflowController {
         .bindPopup(popupHtml, popupOpts)
         .addTo(this.sketchLayerGroup);
 
-      this.lineLayersBySupplyId.set(s.id, { main: layer, hit: hitLayer });
+      // Se recrea el círculo numerado sobre el segundo punto de la
+      // línea, si conocemos su número permanente.
+      let labelLayer = null;
+      if (itemNumber != null) {
+        const coords = s.lineGeoJSON.geometry.coordinates;
+        const endCoord = coords[coords.length - 1]; // [lng, lat]
+        const labelIcon = L.divIcon({
+          className: '',
+          html: `<div class="acometida-number-label">${itemNumber}</div>`,
+          iconSize: [24, 24],
+          iconAnchor: [12, 12],
+        });
+        labelLayer = L.marker([endCoord[1], endCoord[0]], { icon: labelIcon, interactive: false }).addTo(this.sketchLayerGroup);
+      }
+
+      this.lineLayersBySupplyId.set(s.id, { main: layer, hit: hitLayer, label: labelLayer });
     });
   }
 
@@ -3849,6 +3889,21 @@ class SelWorkSessionPersistenceService {
     }
   }
 
+  /** Trae el progreso de TODOS los archivos (para reconstruir los números de las líneas al abrir la app). */
+  async getAllProgress() {
+    try {
+      const db = await this.dbPromise;
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction(this.progressStore, 'readonly');
+        const req = tx.objectStore(this.progressStore).getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error);
+      });
+    } catch (err) {
+      return [];
+    }
+  }
+
   /** Marca cuál archivo es el que está "en trabajo" ahora mismo. */
   async setActiveFile(fileName) {
     try {
@@ -4116,7 +4171,8 @@ class SelWorkSessionController {
     const value = this._serieValue(entry);
     const line = this._serieLine(entry);
     const supplyId = typeof entry === 'object' ? entry.supplyId : null;
-    this.groups[gi].series[si] = { value, line, supplyId, edited: true };
+    const itemNumber = typeof entry === 'object' ? entry.itemNumber : null; // se conserva, antes se perdía aquí
+    this.groups[gi].series[si] = { value, line, supplyId, edited: true, itemNumber };
     await this._persist();
 
     if (supplyId != null) {
@@ -4145,8 +4201,12 @@ class SelWorkSessionController {
     const supply = this.suppliesCache.get(supplyId);
     if (!group || !supply) return;
 
+    const entry = group.series.find((e) => (typeof e === 'object' ? e.supplyId : null) === supplyId);
+    const itemNumber = typeof entry === 'object' ? entry.itemNumber : null;
+
     const tipoLabel = group.tipo === '1' ? 'Sobretensión (1)' : 'Subtensión (0)';
     const rows = [
+      ...(itemNumber != null ? [['Ítem', `N.° ${itemNumber}`]] : []),
       ['Serie', supply.form?.medidorSerie || 'N/D'],
       ['Fase', supply.form?.faseCampo || 'N/D'],
       ['Tipo', tipoLabel],
@@ -4651,7 +4711,8 @@ ${placemarks.join('\n')}
 
         if (this.groups[gi]?.series[si] !== undefined) {
           const line = this._serieLine(prev);
-          this.groups[gi].series[si] = { value: newValue, line, supplyId, edited: prev.edited };
+          const itemNumber = typeof prev === 'object' ? prev.itemNumber : null;
+          this.groups[gi].series[si] = { value: newValue, line, supplyId, edited: prev.edited, itemNumber };
         }
 
         if (supplyId != null) {
@@ -4974,6 +5035,7 @@ class AppController {
     // haya llegado por "Compartir desde WhatsApp" — así el nuevo
     // archivo se suma a lo anterior en vez de empezar de cero.
     await this.gisLayerService.restoreFromStorage();
+    await this.supplyWorkflowController._restoreSavedLines(this.selWorkSessionPersistenceService);
     await this.selWorkSessionController.restoreFromStorage();
     await this.pendingShareController.checkForSharedFile();
   }
