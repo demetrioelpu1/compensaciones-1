@@ -699,6 +699,13 @@
     color:var(--danger); font-size:13px; cursor:pointer;
   }
   .serie-line2{ display:flex; align-items:center; gap:8px; }
+  .serie-line3{ margin-top:8px; }
+  .comment-edit-input{
+    width:100%; background:#0e1116; border:1px solid var(--line); border-radius:6px;
+    padding:8px; color:var(--text); font-family:var(--sans); font-size:10.5px;
+    resize:vertical; box-sizing:border-box;
+  }
+  .comment-edit-input:focus{ border-color:var(--hivis); outline:none; }
   .fase-edit-select{
     background:#0e1116; border:1px solid var(--line); border-radius:6px;
     padding:6px 4px; color:var(--text); font-family:var(--sans); font-size:10.5px;
@@ -1271,6 +1278,10 @@
       </div>
       <button id="btn-pick-from-gallery">Usar una foto de la galería</button>
       <input type="file" id="gallery-file-input" accept="image/*" style="display:none;" />
+      <div class="supply-field" style="margin-top:16px;">
+        <label for="f-comentario">Comentario (opcional)</label>
+        <textarea id="f-comentario" rows="3" placeholder="Ej. Medidor con vidrio rajado, acceso difícil, etc." style="width:100%; background:var(--bar-bg-2); border:1px solid var(--line); border-radius:9px; padding:11px 12px; color:var(--text); font-family:var(--sans); font-size:13px; resize:vertical; box-sizing:border-box;"></textarea>
+      </div>
     </div>
 
     <!-- Menú: a qué casilla asignar la foto elegida de la galería -->
@@ -3157,6 +3168,7 @@ class SupplyWorkflowController {
     this.photoSlots = Array.from(document.querySelectorAll('.photo-slot'));
     this.photoFiles = [null, null, null];
     this.btnPhotosTorch = document.getElementById('btn-photos-torch');
+    this.fComentario = document.getElementById('f-comentario');
     this.photosTorchStream = null;
     this.photosTorchOn = false;
     this.btnPickFromGallery = document.getElementById('btn-pick-from-gallery');
@@ -3332,6 +3344,7 @@ class SupplyWorkflowController {
   _openPhotoCapture() {
     const photoLabels = ['Foto Medidor', 'Foto Cajatoma', 'Foto Fachada'];
     this.photoFiles = [null, null, null];
+    this.fComentario.value = '';
     this.photoSlots.forEach((slot, i) => {
       slot.classList.remove('filled');
       slot.innerHTML = `<span class="slot-label">${photoLabels[i]}</span><input type="file" accept="image/*" capture="environment" />`;
@@ -3376,6 +3389,7 @@ class SupplyWorkflowController {
         scannedValue: this.current.scannedValue,
         form: this.current.form,
         photos: this.current.photos, // Blobs — IndexedDB los guarda de forma nativa
+        comment: this.fComentario.value.trim(),
         selCode,
         selTipoLabel,
         savedAt: new Date().toISOString(),
@@ -4145,6 +4159,23 @@ class SelWorkSessionController {
     this._toast('✓ Corregido y guardado.');
   }
 
+  /** Guarda el comentario corregido/agregado y marca la fila en verde. */
+  async _updateComment(gi, si, newComment) {
+    const entry = this.groups[gi]?.series[si];
+    const supplyId = typeof entry === 'object' ? entry.supplyId : null;
+    if (supplyId == null || !this.supplyPersistenceService) {
+      this._toast('Esta serie no tiene un suministro asociado para corregir.');
+      return;
+    }
+
+    await this.supplyPersistenceService.updateSupply(supplyId, { comment: newComment });
+
+    await this._markEdited(gi, si);
+    await this._refreshSuppliesCache();
+    this._renderTracker();
+    this._toast('✓ Comentario guardado.');
+  }
+
   /** Reemplaza una de las 3 fotos de un suministro y marca la fila en verde. */
   async _retakePhoto(gi, si, photoIndex, file) {
     const entry = this.groups[gi]?.series[si];
@@ -4256,7 +4287,7 @@ class SelWorkSessionController {
   async _exportPackage() {
     this._toast('Preparando descarga con fotos, un momento…');
 
-    const rows = [['SEL', 'Tipo', 'Item', 'Serie', 'Carpeta de fotos']];
+    const rows = [['Item', 'SEL', 'Serie', 'Tipo', 'Comentario', 'Carpeta de fotos']];
     const zip = new JSZip();
     const allSupplies = this.supplyPersistenceService ? await this.supplyPersistenceService.getAll() : [];
 
@@ -4264,7 +4295,7 @@ class SelWorkSessionController {
       const tipoLabel = g.tipo === '1' ? 'Sobretensión (1)' : 'Subtensión (0)';
 
       if (!g.series.length) {
-        rows.push([g.selCode, tipoLabel, '', '', '']);
+        rows.push(['', g.selCode, '', tipoLabel, '', '']);
         continue;
       }
 
@@ -4283,7 +4314,7 @@ class SelWorkSessionController {
           });
         }
 
-        rows.push([g.selCode, tipoLabel, itemNumber, value, folderName + '/']);
+        rows.push([itemNumber, g.selCode, value, tipoLabel, supply?.comment || '', folderName + '/']);
       }
     }
 
@@ -4304,13 +4335,6 @@ class SelWorkSessionController {
       );
     }
 
-    // Archivo KML: las líneas de acometida con su tabla de atributos
-    // adosada (Serie, Fase, Tipo, SEL de origen) — ArcGIS lo importa
-    // directo con la herramienta "KML a Capa", generando geometría +
-    // tabla de atributos, igual que traería una geodatabase.
-    const kmzBlob = await this._buildAcometidasKMZ(allSupplies);
-    if (kmzBlob) zip.file(`${(this.fileName || 'archivo').replace('.sel', '')}_acometidas.kmz`, kmzBlob);
-
     const zipBlob = await zip.generateAsync({ type: 'blob' });
     const url = URL.createObjectURL(zipBlob);
     const a = document.createElement('a');
@@ -4321,7 +4345,7 @@ class SelWorkSessionController {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    this._toast('✓ Descarga lista: Excel (con hipervínculo activo) + fotos + GeoJSON (para ArcGIS) + KMZ.');
+    this._toast('✓ Descarga lista: Excel (con hipervínculo activo) + fotos + GeoJSON (para ArcGIS).');
   }
 
   /**
@@ -4454,6 +4478,7 @@ class SelWorkSessionController {
             Serie: value,
             Fase: fase,
             Tipo: tipoLabel,
+            Comentario: supply?.comment || '',
             Carpeta_Fotos: folderName,
           },
         });
@@ -4462,96 +4487,6 @@ class SelWorkSessionController {
 
     if (!features.length) return null;
     return { type: 'FeatureCollection', features };
-  }
-
-  /**
-   * Construye un KML con todas las líneas de acometida dibujadas en
-   * este archivo, cada una con su tabla de atributos adosada (Serie,
-   * Fase, Tipo, SEL de origen). Al importarlo en ArcGIS ("KML a
-   * Capa"), se genera automáticamente la geometría + su tabla de
-   * atributos, cumpliendo el mismo propósito que una geodatabase.
-   */
-  /**
-   * Construye un KMZ (KML + fotos embebidas dentro del mismo
-   * archivo) con todas las líneas de acometida. Cada línea trae su
-   * tabla de atributos (SEL, Fase, Tipo, Serie) Y sus 3 fotos en la
-   * burbuja de descripción — al hacer clic en la línea dentro de
-   * Google Earth o ArcGIS, se ven los datos y las fotos juntos, sin
-   * depender de ninguna carpeta externa.
-   */
-  async _buildAcometidasKMZ(allSupplies) {
-    const kmzZip = new JSZip();
-    const filesFolder = kmzZip.folder('files');
-    const placemarks = [];
-
-    for (const g of this.groups) {
-      const tipoLabel = g.tipo === '1' ? 'Sobretensión' : 'Subtensión';
-      for (let i = 0; i < g.series.length; i++) {
-        const entry = g.series[i];
-        const line = this._serieLine(entry);
-        if (!line || !line.geometry || line.geometry.type !== 'LineString') continue;
-
-        const value = this._serieValue(entry);
-        const safeValue = String(value).replace(/[^a-zA-Z0-9_-]/g, '_');
-        const supplyId = typeof entry === 'object' ? entry.supplyId : null;
-        const supply = supplyId != null && allSupplies ? allSupplies.find((s) => s.id === supplyId) : null;
-        const fase = supply?.form?.faseCampo || 'N/D';
-        const coordsStr = line.geometry.coordinates.map((c) => c.join(',')).join(' ');
-
-        // Las 3 fotos se guardan dentro del propio KMZ (carpeta
-        // "files/") y se enlazan por ruta relativa en la descripción.
-        let photosHtml = '';
-        if (supply && supply.photos && supply.photos.length) {
-          supply.photos.forEach((blob, p) => {
-            if (!blob) return;
-            const photoName = `${safeValue}_${p + 1}.jpg`;
-            filesFolder.file(photoName, blob);
-            photosHtml += `<img src="files/${photoName}" width="240"/><br/>`;
-          });
-        }
-
-        placemarks.push(`    <Placemark>
-      <name>${this._escapeXml(value)}</name>
-      <description><![CDATA[
-        <b>SEL:</b> ${this._escapeXml(g.selCode)}<br/>
-        <b>Fase:</b> ${this._escapeXml(fase)}<br/>
-        <b>Tipo:</b> ${this._escapeXml(tipoLabel)} (${g.tipo})<br/>
-        ${photosHtml}
-      ]]></description>
-      <ExtendedData>
-        <Data name="SEL"><value>${this._escapeXml(g.selCode)}</value></Data>
-        <Data name="Item"><value>${(typeof entry === 'object' && entry.itemNumber) ? entry.itemNumber : i + 1}</value></Data>
-        <Data name="Serie"><value>${this._escapeXml(value)}</value></Data>
-        <Data name="Fase"><value>${this._escapeXml(fase)}</value></Data>
-        <Data name="Tipo"><value>${this._escapeXml(tipoLabel)} (${g.tipo})</value></Data>
-      </ExtendedData>
-      <LineString>
-        <coordinates>${coordsStr}</coordinates>
-      </LineString>
-    </Placemark>`);
-      }
-    }
-
-    if (!placemarks.length) return null;
-
-    const kmlText = `<?xml version="1.0" encoding="UTF-8"?>
-<kml xmlns="http://www.opengis.net/kml/2.2">
-  <Document>
-    <name>${this._escapeXml((this.fileName || 'Acometidas').replace('.sel', ''))}</name>
-${placemarks.join('\n')}
-  </Document>
-</kml>`;
-
-    kmzZip.file('doc.kml', kmlText);
-    return await kmzZip.generateAsync({ type: 'blob' });
-  }
-
-  _escapeXml(str) {
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
   }
 
   async _openTracker() {
@@ -4650,6 +4585,8 @@ ${placemarks.join('\n')}
             </label>`;
           }
 
+          const currentComment = supply?.comment || '';
+
           const rowKey = `${gi}-${si}`;
           const isOpen = this.openSeriesRows.has(rowKey);
           const displayNumber = (typeof serie === 'object' && serie.itemNumber) ? serie.itemNumber : si + 1;
@@ -4669,6 +4606,9 @@ ${placemarks.join('\n')}
                 <div class="serie-line2">
                   <select class="fase-edit-select" data-group="${gi}" data-serie="${si}">${faseOptions}</select>
                   <div class="fotos-mini">${photosHtml}</div>
+                </div>
+                <div class="serie-line3">
+                  <textarea class="comment-edit-input" data-group="${gi}" data-serie="${si}" rows="2" placeholder="Comentario (opcional)">${this._escape(currentComment)}</textarea>
                 </div>
               </div>
             </div>
@@ -4751,6 +4691,15 @@ ${placemarks.join('\n')}
         const gi = Number(e.target.dataset.group);
         const si = Number(e.target.dataset.serie);
         this._updateSupplyField(gi, si, { faseCampo: e.target.value });
+      });
+    });
+
+    // Comentario: se guarda al salir del campo (no en cada tecla).
+    this.tableWrap.querySelectorAll('.comment-edit-input').forEach((textarea) => {
+      textarea.addEventListener('blur', (e) => {
+        const gi = Number(e.target.dataset.group);
+        const si = Number(e.target.dataset.serie);
+        this._updateComment(gi, si, e.target.value.trim());
       });
     });
 
