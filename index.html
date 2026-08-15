@@ -1265,9 +1265,9 @@
     </div>
     <div id="photo-capture-body">
       <div class="photo-slots">
-        <label class="photo-slot" data-slot="0"><span class="slot-label">Foto 1</span><input type="file" accept="image/*" capture="environment" /></label>
-        <label class="photo-slot" data-slot="1"><span class="slot-label">Foto 2</span><input type="file" accept="image/*" capture="environment" /></label>
-        <label class="photo-slot" data-slot="2"><span class="slot-label">Foto 3</span><input type="file" accept="image/*" capture="environment" /></label>
+        <label class="photo-slot" data-slot="0"><span class="slot-label">Foto Medidor</span><input type="file" accept="image/*" capture="environment" /></label>
+        <label class="photo-slot" data-slot="1"><span class="slot-label">Foto Cajatoma</span><input type="file" accept="image/*" capture="environment" /></label>
+        <label class="photo-slot" data-slot="2"><span class="slot-label">Foto Fachada</span><input type="file" accept="image/*" capture="environment" /></label>
       </div>
       <button id="btn-pick-from-gallery">Usar una foto de la galería</button>
       <input type="file" id="gallery-file-input" accept="image/*" style="display:none;" />
@@ -1277,9 +1277,9 @@
     <div id="gallery-target-modal">
       <div id="gallery-target-card">
         <h3>¿Reemplazar cuál foto?</h3>
-        <button class="gallery-target-btn" data-slot="0">Foto 1</button>
-        <button class="gallery-target-btn" data-slot="1">Foto 2</button>
-        <button class="gallery-target-btn" data-slot="2">Foto 3</button>
+        <button class="gallery-target-btn" data-slot="0">Foto Medidor</button>
+        <button class="gallery-target-btn" data-slot="1">Foto Cajatoma</button>
+        <button class="gallery-target-btn" data-slot="2">Foto Fachada</button>
         <button id="btn-gallery-target-cancel">Cancelar</button>
       </div>
     </div>
@@ -3331,10 +3331,11 @@ class SupplyWorkflowController {
 
   // --- Paso d: fotografías -----------------------------------------
   _openPhotoCapture() {
+    const photoLabels = ['Foto Medidor', 'Foto Cajatoma', 'Foto Fachada'];
     this.photoFiles = [null, null, null];
     this.photoSlots.forEach((slot, i) => {
       slot.classList.remove('filled');
-      slot.innerHTML = `<span class="slot-label">Foto ${i + 1}</span><input type="file" accept="image/*" capture="environment" />`;
+      slot.innerHTML = `<span class="slot-label">${photoLabels[i]}</span><input type="file" accept="image/*" capture="environment" />`;
       slot.querySelector('input').addEventListener('change', (e) => this._onPhotoSelected(slot, e.target.files[0]));
     });
     this.btnSaveSupply.disabled = true;
@@ -4226,8 +4227,10 @@ class SelWorkSessionController {
       }
     }
 
-    const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
-    zip.file(`${(this.fileName || 'archivo').replace('.sel', '')}.csv`, '\ufeff' + csv);
+    // Excel real (.xlsx) con el hipervínculo de "Carpeta de fotos"
+    // YA ACTIVO — se abre directo, sin pasos extra de conversión.
+    const xlsxBlob = await this._buildXLSX(rows);
+    zip.file(`${(this.fileName || 'archivo').replace('.sel', '')}.xlsx`, xlsxBlob);
 
     // GeoJSON: la opción más directa para ArcGIS Pro — se agrega
     // como "Add Data" y arma una capa real con columnas de atributo
@@ -4258,7 +4261,7 @@ class SelWorkSessionController {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    this._toast('✓ Descarga lista: CSV + fotos + GeoJSON (para ArcGIS) + KMZ.');
+    this._toast('✓ Descarga lista: Excel (con hipervínculo activo) + fotos + GeoJSON (para ArcGIS) + KMZ.');
   }
 
   /**
@@ -4268,6 +4271,105 @@ class SelWorkSessionController {
    * Es la forma más directa de traer esto a ArcGIS Pro: "Add Data" →
    * elegir el .geojson → queda como capa con columnas de verdad.
    */
+  /**
+   * Construye un archivo .xlsx REAL (formato Excel nativo, no CSV),
+   * con la última columna ("Carpeta de fotos") como hipervínculo YA
+   * ACTIVO — al abrir el Excel, ese texto ya aparece azul y
+   * subrayado, y hace clic directo abre la carpeta correspondiente
+   * (siempre que el Excel y las carpetas estén juntos, tal como se
+   * extraen del mismo ZIP). Se arma a mano el formato OOXML de
+   * Excel usando JSZip, sin depender de ninguna librería adicional.
+   */
+  async _buildXLSX(rows) {
+    const escapeXml = (s) => String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+
+    const colLetter = (n) => {
+      let s = '';
+      n++;
+      while (n > 0) {
+        const rem = (n - 1) % 26;
+        s = String.fromCharCode(65 + rem) + s;
+        n = Math.floor((n - 1) / 26);
+      }
+      return s;
+    };
+
+    const hyperlinkColIndex = rows[0].length - 1; // última columna: "Carpeta de fotos"
+    const hyperlinkRels = [];
+    const hyperlinkEntries = [];
+    let relCounter = 1;
+    let sheetRows = '';
+
+    rows.forEach((row, ri) => {
+      const rNum = ri + 1;
+      let rowXml = `<row r="${rNum}">`;
+      row.forEach((cell, ci) => {
+        const cellRef = `${colLetter(ci)}${rNum}`;
+        const text = cell === null || cell === undefined ? '' : String(cell);
+        rowXml += `<c r="${cellRef}" t="inlineStr"><is><t xml:space="preserve">${escapeXml(text)}</t></is></c>`;
+
+        // Cada celda de "Carpeta de fotos" (salvo el encabezado) se
+        // vuelve un hipervínculo real hacia esa carpeta relativa.
+        if (ri > 0 && ci === hyperlinkColIndex && text) {
+          const rId = `rId${relCounter++}`;
+          hyperlinkRels.push(`<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${escapeXml(text)}" TargetMode="External"/>`);
+          hyperlinkEntries.push(`<hyperlink ref="${cellRef}" r:id="${rId}"/>`);
+        }
+      });
+      rowXml += '</row>';
+      sheetRows += rowXml;
+    });
+
+    const sheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheetData>${sheetRows}</sheetData>
+  ${hyperlinkEntries.length ? `<hyperlinks>${hyperlinkEntries.join('')}</hyperlinks>` : ''}
+</worksheet>`;
+
+    const sheetRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${hyperlinkRels.join('')}</Relationships>`;
+
+    const contentTypesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>`;
+
+    const rootRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`;
+
+    const workbookXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Datos" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>`;
+
+    const workbookRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`;
+
+    const xlsxZip = new JSZip();
+    xlsxZip.file('[Content_Types].xml', contentTypesXml);
+    xlsxZip.file('_rels/.rels', rootRelsXml);
+    xlsxZip.file('xl/workbook.xml', workbookXml);
+    xlsxZip.file('xl/_rels/workbook.xml.rels', workbookRelsXml);
+    xlsxZip.file('xl/worksheets/sheet1.xml', sheetXml);
+    xlsxZip.file('xl/worksheets/_rels/sheet1.xml.rels', sheetRelsXml);
+
+    return await xlsxZip.generateAsync({
+      type: 'blob',
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+  }
+
   _buildAcometidasGeoJSON(allSupplies) {
     const features = [];
 
