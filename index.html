@@ -4344,13 +4344,16 @@ class SelWorkSessionController {
 
         const supply = supplyId != null ? allSupplies.find((s) => s.id === supplyId) : null;
         if (supply && supply.photos && supply.photos.length) {
-          const folder = zip.folder(folderName);
+          // Todas las carpetas de fotos van anidadas dentro de una
+          // sola carpeta contenedora "carpeta de fotos", junto al
+          // Excel y el GeoJSON.
+          const folder = zip.folder('carpeta de fotos').folder(folderName);
           supply.photos.forEach((blob, p) => {
             if (blob) folder.file(`foto_${p + 1}.jpg`, blob);
           });
         }
 
-        rows.push([itemNumber, g.selCode, value, tipoValue, supply?.comment || '', folderName + '/']);
+        rows.push([itemNumber, g.selCode, value, tipoValue, supply?.comment || '', `carpeta de fotos/${folderName}/`]);
       }
     }
 
