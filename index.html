@@ -4353,7 +4353,7 @@ class SelWorkSessionController {
           });
         }
 
-        rows.push([itemNumber, g.selCode, value, tipoValue, supply?.comment || '', `carpeta de fotos/${folderName}/`]);
+        rows.push([itemNumber, g.selCode, value, tipoValue, supply?.comment || '', folderName + '/']);
       }
     }
 
