@@ -4381,7 +4381,7 @@ class SelWorkSessionController {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    this._toast('✓ Descarga lista: Excel (con hipervínculo activo) + fotos + GeoJSON (para ArcGIS).');
+    this._toast('✓ Descarga lista: Excel + fotos + GeoJSON (para ArcGIS).');
   }
 
   /**
@@ -4400,6 +4400,13 @@ class SelWorkSessionController {
    * extraen del mismo ZIP). Se arma a mano el formato OOXML de
    * Excel usando JSZip, sin depender de ninguna librería adicional.
    */
+  /**
+   * Construye un archivo .xlsx REAL (formato Excel nativo, no CSV).
+   * NOTA: la columna "Carpeta de fotos" se deja como texto plano
+   * (sin hipervínculo) — Office bloquea por seguridad los
+   * hipervínculos relativos en archivos descargados de internet
+   * ("Marca de la Web"), así que el enlace no llegaba a abrirse.
+   */
   async _buildXLSX(rows) {
     const escapeXml = (s) => String(s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -4416,31 +4423,14 @@ class SelWorkSessionController {
       return s;
     };
 
-    const hyperlinkColIndex = rows[0].length - 1; // última columna: "Carpeta de fotos"
-    const hyperlinkRels = [];
-    const hyperlinkEntries = [];
-    let relCounter = 1;
     let sheetRows = '';
-
     rows.forEach((row, ri) => {
       const rNum = ri + 1;
       let rowXml = `<row r="${rNum}">`;
       row.forEach((cell, ci) => {
         const cellRef = `${colLetter(ci)}${rNum}`;
         const text = cell === null || cell === undefined ? '' : String(cell);
-        const isHyperlinkCell = ri > 0 && ci === hyperlinkColIndex && text;
-        // s="1" aplica el estilo azul+subrayado (definido en styles.xml)
-        // a las celdas de hipervínculo, para que se vean "activadas".
-        const styleAttr = isHyperlinkCell ? ' s="1"' : '';
-        rowXml += `<c r="${cellRef}"${styleAttr} t="inlineStr"><is><t xml:space="preserve">${escapeXml(text)}</t></is></c>`;
-
-        // Cada celda de "Carpeta de fotos" (salvo el encabezado) se
-        // vuelve un hipervínculo real hacia esa carpeta relativa.
-        if (isHyperlinkCell) {
-          const rId = `rId${relCounter++}`;
-          hyperlinkRels.push(`<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${escapeXml(text)}" TargetMode="External"/>`);
-          hyperlinkEntries.push(`<hyperlink ref="${cellRef}" r:id="${rId}"/>`);
-        }
+        rowXml += `<c r="${cellRef}" t="inlineStr"><is><t xml:space="preserve">${escapeXml(text)}</t></is></c>`;
       });
       rowXml += '</row>';
       sheetRows += rowXml;
@@ -4449,11 +4439,7 @@ class SelWorkSessionController {
     const sheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
   <sheetData>${sheetRows}</sheetData>
-  ${hyperlinkEntries.length ? `<hyperlinks>${hyperlinkEntries.join('')}</hyperlinks>` : ''}
 </worksheet>`;
-
-    const sheetRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${hyperlinkRels.join('')}</Relationships>`;
 
     const contentTypesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -4461,7 +4447,6 @@ class SelWorkSessionController {
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
   <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
-  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
 </Types>`;
 
     const rootRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -4479,26 +4464,7 @@ class SelWorkSessionController {
     const workbookRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 </Relationships>`;
-
-    // Estilo azul + subrayado (el clásico de hipervínculo en Excel),
-    // aplicado con s="1" a las celdas de "Carpeta de fotos".
-    const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <fonts count="2">
-    <font><sz val="11"/><name val="Calibri"/></font>
-    <font><sz val="11"/><name val="Calibri"/><color rgb="FF0563C1"/><u/></font>
-  </fonts>
-  <fills count="1"><fill><patternFill patternType="none"/></fill></fills>
-  <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
-  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-  <cellXfs count="2">
-    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
-    <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
-  </cellXfs>
-  <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
-</styleSheet>`;
 
     const xlsxZip = new JSZip();
     xlsxZip.file('[Content_Types].xml', contentTypesXml);
@@ -4506,8 +4472,6 @@ class SelWorkSessionController {
     xlsxZip.file('xl/workbook.xml', workbookXml);
     xlsxZip.file('xl/_rels/workbook.xml.rels', workbookRelsXml);
     xlsxZip.file('xl/worksheets/sheet1.xml', sheetXml);
-    xlsxZip.file('xl/worksheets/_rels/sheet1.xml.rels', sheetRelsXml);
-    xlsxZip.file('xl/styles.xml', stylesXml);
 
     return await xlsxZip.generateAsync({
       type: 'blob',
