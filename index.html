@@ -3014,7 +3014,7 @@ class BarcodeScanController {
 
     try {
       this.detector = new window.BarcodeDetector({
-        formats: ['code_128', 'code_39', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'itf', 'codabar'],
+        formats: ['code_128', 'code_39', 'code_93', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'itf', 'codabar'],
       });
       this.stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment' },
