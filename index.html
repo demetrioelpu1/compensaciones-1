@@ -1387,7 +1387,7 @@ class MapService {
       }),
       satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
         maxZoom: 21, // por encima del mapa de calles (19), para que el acercamiento se sienta mayor, no solo igual
-        maxNativeZoom: 18, // más allá de este nivel, Leaflet amplía la última imagen disponible en vez de mostrar un vacío
+        maxNativeZoom: 19, // Esri sí ofrece nitidez real hasta este nivel en zonas urbanas — antes estaba en 18, de más
         attribution: 'Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics',
       }),
     };
