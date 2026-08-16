@@ -591,6 +591,21 @@
   #btn-new-supply svg{ width:18px; height:18px; stroke:#fff; fill:none; stroke-width:2.2; }
   #btn-new-supply.hidden{ display:none; }
 
+  /* Botón para prender/apagar los popups de las acometidas ya
+     dibujadas — útil en bancos de medidores, donde varias líneas
+     quedan muy cerca entre sí y el popup de una estorba al dibujar
+     la siguiente. */
+  #btn-toggle-popups{
+    position:absolute; left:14px; bottom:150px;
+    display:flex; align-items:center; gap:7px;
+    background:var(--bar-bg-2); border:1px solid var(--line); color:var(--text);
+    border-radius:20px; padding:8px 13px; font-family:var(--sans); font-weight:700; font-size:11px;
+    box-shadow:0 4px 14px rgba(0,0,0,.4); z-index:900; cursor:pointer;
+  }
+  #btn-toggle-popups svg{ width:15px; height:15px; stroke:var(--text-dim); fill:none; stroke-width:2.2; }
+  #btn-toggle-popups.off{ background:var(--danger); border-color:var(--danger); }
+  #btn-toggle-popups.off svg{ stroke:#fff; }
+
   /* Contador de suministros registrados en la sesión */
   #supply-counter{
     position:absolute; left:14px; bottom:74px;
@@ -1152,6 +1167,11 @@
       <div class="ssb-file" id="ssb-file">—</div>
       <div class="ssb-status">Ítem <b id="ssb-item">1</b>/<span id="ssb-total-items">1</span> · <span id="ssb-series-count">0</span> series · <span class="ssb-tap">toca para ver</span></div>
     </div>
+
+    <button id="btn-toggle-popups" title="Prender/apagar los popups de las acometidas ya dibujadas">
+      <svg viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+      <span id="btn-toggle-popups-label">Popups: ON</span>
+    </button>
 
     <button id="btn-new-supply">
       <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
@@ -3134,6 +3154,9 @@ class SupplyWorkflowController {
     this.drawController = new AcometidaDrawController(mapService);
     this.scanController = new BarcodeScanController();
     this.lineLayersBySupplyId = new Map(); // id de suministro -> {main, hit}, para poder borrar la línea al instante si se corrige
+    this.popupsEnabled = true; // se puede apagar para dibujar acometidas muy cercanas sin que estorben los popups de las ya dibujadas
+    this.btnTogglePopups = document.getElementById('btn-toggle-popups');
+    this.btnTogglePopupsLabel = document.getElementById('btn-toggle-popups-label');
 
     this.current = null; // acumula los datos del suministro en curso
 
@@ -3185,6 +3208,7 @@ class SupplyWorkflowController {
 
   _bindEvents() {
     this.btnStart.addEventListener('click', () => this._startNewSupply());
+    this.btnTogglePopups.addEventListener('click', () => this._togglePopups());
 
     this.drawController.onFinish = (lineGeoJSON, lineLayer) => this._onLineFinished(lineGeoJSON, lineLayer);
     this.drawController.onCancel = () => this._resetToStart();
@@ -3475,14 +3499,23 @@ class SupplyWorkflowController {
         const popupHtml = `<div class="acometida-popup"><div class="title">Acometida</div><table>${rows}</table></div>`;
         const popupOpts = { autoPan: false, closeButton: true, maxWidth: 280, minWidth: 230 };
 
-        this.current.lineLayer.bindPopup(popupHtml, popupOpts);
-
         // Franja invisible mucho más ancha (24px) sobre la misma línea,
         // solo para que el toque en pantalla la detecte fácil — la
         // línea visible sigue viéndose fina (3px), esto no la cambia.
         const hitLine = L.polyline(this.current.lineLayer.getLatLngs(), {
           color: '#000', opacity: 0, weight: 24,
-        }).bindPopup(popupHtml, popupOpts).addTo(this.sketchLayerGroup);
+        }).addTo(this.sketchLayerGroup);
+
+        if (this.popupsEnabled) {
+          this.current.lineLayer.bindPopup(popupHtml, popupOpts);
+          hitLine.bindPopup(popupHtml, popupOpts);
+        } else {
+          // Popups apagados en este momento (dibujando varias
+          // acometidas muy cercanas): se guarda el contenido para
+          // cuando se reactiven, sin interrumpir ahora.
+          this.current.lineLayer._cachedPopupContent = popupHtml;
+          hitLine._cachedPopupContent = popupHtml;
+        }
 
         this.lineLayersBySupplyId.set(newSupplyId, { main: this.current.lineLayer, hit: hitLine, label: this.current.numberLabel });
       }
@@ -3512,6 +3545,39 @@ class SupplyWorkflowController {
   }
 
   /** Borra del mapa (línea visible + franja de toque) la acometida de un suministro específico. */
+  /**
+   * Prende/apaga los popups de TODAS las acometidas ya dibujadas.
+   * Útil en bancos de medidores: cuando varios puntos de origen
+   * quedan muy cerca entre sí, el popup de una línea existente
+   * puede "ganarle" al toque que buscaba dibujar la nueva. Al
+   * apagar los popups, esos toques quedan libres para el dibujo.
+   */
+  _togglePopups() {
+    this.popupsEnabled = !this.popupsEnabled;
+
+    this.lineLayersBySupplyId.forEach((entry) => {
+      [entry.main, entry.hit].forEach((layer) => {
+        if (!layer) return;
+        if (this.popupsEnabled) {
+          if (layer._cachedPopupContent) {
+            layer.bindPopup(layer._cachedPopupContent, { autoPan: false, closeButton: true, maxWidth: 280, minWidth: 230 });
+          }
+        } else {
+          const popup = layer.getPopup ? layer.getPopup() : null;
+          if (popup) layer._cachedPopupContent = popup.getContent();
+          layer.closePopup();
+          layer.unbindPopup();
+        }
+      });
+    });
+
+    this.btnTogglePopups.classList.toggle('off', !this.popupsEnabled);
+    this.btnTogglePopupsLabel.textContent = this.popupsEnabled ? 'Popups: ON' : 'Popups: OFF';
+    this._toast(this.popupsEnabled
+      ? '🟢 Popups reactivados.'
+      : '🔴 Popups apagados — ahora puedes dibujar acometidas muy cercanas sin que estorben.');
+  }
+
   removeLineForSupply(supplyId) {
     const entry = this.lineLayersBySupplyId.get(supplyId);
     if (!entry) return false;
