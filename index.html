@@ -1533,9 +1533,21 @@ class UIController {
 
     // Si el usuario arrastra el mapa manualmente, dejamos de "seguir"
     this.mapService.getMap().on('dragstart', () => {
-      this.following = false;
-      this.btnLocate.classList.remove('following');
+      this.stopFollowing();
     });
+  }
+
+  /**
+   * Deja de "seguir" la posición GPS: cualquier navegación manual
+   * dentro de la app (arrastrar el mapa, tocar un registro de serie
+   * para ver su línea, usar "Ir a coordenadas", etc.) llama a esto
+   * para que el próximo dato del GPS no vuelva a centrar el mapa de
+   * golpe y deshaga lo que el usuario acaba de mirar. Solo vuelve a
+   * seguir cuando el usuario toca explícitamente el botón de ubicar.
+   */
+  stopFollowing() {
+    this.following = false;
+    this.btnLocate.classList.remove('following');
   }
 
   _bindGeoEvents() {
@@ -4267,7 +4279,12 @@ class SelWorkSessionController {
     L.geoJSON(line, { style: () => ({ color: '#2E8B57', weight: 6, opacity: 1 }) }).addTo(this.highlightLayer);
 
     const bounds = L.geoJSON(line).getBounds();
-    if (bounds.isValid()) this.map.fitBounds(bounds, { padding: [80, 80], maxZoom: 20 });
+    if (bounds.isValid()) {
+      // Deja de seguir el GPS: si no, la siguiente lectura de
+      // posición recentra el mapa y deshace este acercamiento.
+      if (window.__uiController) window.__uiController.stopFollowing();
+      this.map.fitBounds(bounds, { padding: [80, 80], maxZoom: 20 });
+    }
 
     this._toast('🟢 Línea resaltada — permita dibujar nuevamente si el dibujo quedó al revés.');
   }
@@ -5033,6 +5050,10 @@ class GotoCoordinatesController {
   }
 
   _goTo(lat, lon) {
+    // Deja de seguir el GPS: si no, la siguiente lectura de posición
+    // recentra el mapa y deshace este "Ir a coordenadas".
+    if (window.__uiController) window.__uiController.stopFollowing();
+
     if (this.marker) this.map.removeLayer(this.marker);
     if (this.connectorLine) this.map.removeLayer(this.connectorLine);
 
@@ -5128,6 +5149,7 @@ class AppController {
     this.mapService = new MapService('map');
     this.geoService = new GeolocationService();
     this.uiController = new UIController(this.mapService, this.geoService);
+    window.__uiController = this.uiController; // acceso desde otros controllers para stopFollowing()
     this.basemapToggleController = new BasemapToggleController(this.mapService);
     this.gotoCoordinatesController = new GotoCoordinatesController(this.mapService, this.geoService);
 
