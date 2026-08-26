@@ -25,6 +25,12 @@
 <script src="./vendor-togeojson.js"></script>
 <script src="./vendor-shp.min.js"></script>
 
+<!-- Generación de Shapefile (.shp/.shx/.dbf/.prj) para la descarga
+     de acometidas — se abre directo en ArcGIS con "Add Data", igual
+     que una Geodatabase, pero se puede generar 100% en el celular
+     (una Geodatabase real solo la puede crear el software de Esri). -->
+<script src="./vendor-shpwrite.js"></script>
+
 <style>
   :root{
     --bar-bg:#181c22;
@@ -1201,7 +1207,7 @@
     <div id="sel-finish-modal">
       <div id="sel-finish-card">
         <h3>¿Culminaste con el trabajo de este archivo?</h3>
-        <button id="btn-finish-download">📊 Descargar Excel + fotos + GeoJSON (ArcGIS)</button>
+        <button id="btn-finish-download">📊 Descargar Excel + fotos + Shapefile (ArcGIS)</button>
         <button id="btn-finish-continue">➡ Continuar con otro archivo</button>
         <button id="btn-finish-cancel">Cancelar</button>
       </div>
@@ -4469,7 +4475,7 @@ class SelWorkSessionController {
         if (supply && supply.photos && supply.photos.length) {
           // Todas las carpetas de fotos van anidadas dentro de una
           // sola carpeta contenedora "carpeta de fotos", junto al
-          // Excel y el GeoJSON.
+          // Excel y el Shapefile.
           const photoLabels = ['Foto Medidor', 'Foto Cajatoma', 'Foto Fachada'];
           const folder = zip.folder('carpeta de fotos').folder(folderName);
           supply.photos.forEach((blob, p) => {
@@ -4486,16 +4492,44 @@ class SelWorkSessionController {
     const xlsxBlob = await this._buildXLSX(rows);
     zip.file(`${(this.fileName || 'archivo').replace('.sel', '')}.xlsx`, xlsxBlob);
 
-    // GeoJSON: la opción más directa para ArcGIS Pro — se agrega
-    // como "Add Data" y arma una capa real con columnas de atributo
-    // de verdad (SEL, Fase, Tipo, Serie, Carpeta_Fotos), lista para
-    // combinarse con el resto de tus redes existentes.
+    // Shapefile (.shp/.shx/.dbf/.prj): se agrega a ArcGIS con
+    // "Add Data" igual que una Geodatabase y arma una capa real con
+    // columnas de atributo de verdad (SEL, Fase, Tipo, Serie,
+    // CarpFotos), lista para combinarse con el resto de tus redes
+    // existentes. No se genera una Geodatabase real (.gdb) porque
+    // ese formato es propiedad de Esri y solo su propio software
+    // (ArcGIS Pro / ArcPy) puede crearlo — no existe forma de
+    // construirlo desde el celular sin ese software. El Shapefile es
+    // el formato más cercano que sí se puede generar por completo
+    // aquí, sin depender de ningún servidor.
     const geojson = this._buildAcometidasGeoJSON(allSupplies);
     if (geojson) {
-      zip.file(
-        `${(this.fileName || 'archivo').replace('.sel', '')}_acometidas.geojson`,
-        JSON.stringify(geojson, null, 2)
+      const shpZipBuffer = await shpwrite.zip(geojson, {
+        outputType: 'arraybuffer',
+        types: { polyline: 'acometidas' },
+      });
+      const shpZip = await JSZip.loadAsync(shpZipBuffer);
+      const shpFolder = zip.folder(
+        `${(this.fileName || 'archivo').replace('.sel', '')}_acometidas_shapefile`
       );
+      for (const entryName of Object.keys(shpZip.files)) {
+        const entry = shpZip.files[entryName];
+        if (entry.dir) continue;
+        const content = await entry.async('arraybuffer');
+        if (entryName.toLowerCase().endsWith('.dbf')) {
+          // El .dbf guarda los textos (Tipo, Comentario, etc.) byte
+          // por byte en codepage 1252 (Windows/Latin), que es donde
+          // caen bien las tildes y la "ñ" del español. Se declara
+          // ese codepage de dos formas para que cualquier lector
+          // (ArcGIS incluido) lo detecte y no muestre símbolos raros:
+          // el byte 29 de la cabecera del .dbf, y un archivo .cpg
+          // aparte (el método que prefieren las versiones recientes).
+          const view = new DataView(content);
+          view.setUint8(29, 0x03);
+        }
+        shpFolder.file(entryName, content);
+      }
+      shpFolder.file('acometidas.cpg', '1252');
     }
 
     const zipBlob = await zip.generateAsync({ type: 'blob' });
@@ -4508,15 +4542,15 @@ class SelWorkSessionController {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    this._toast('✓ Descarga lista: Excel + fotos + GeoJSON (para ArcGIS).');
+    this._toast('✓ Descarga lista: Excel + fotos + Shapefile (para ArcGIS).');
   }
 
   /**
-   * Construye un GeoJSON de las líneas de acometida, con los
-   * atributos como propiedades reales (SEL, Item, Serie, Fase, Tipo,
-   * y la carpeta donde están sus 3 fotos dentro de este mismo ZIP).
-   * Es la forma más directa de traer esto a ArcGIS Pro: "Add Data" →
-   * elegir el .geojson → queda como capa con columnas de verdad.
+   * Construye un GeoJSON (paso intermedio, no se descarga tal cual)
+   * de las líneas de acometida, con los atributos como propiedades
+   * reales (SEL, Item, Serie, Fase, Tipo, y la carpeta donde están
+   * sus 3 fotos dentro de este mismo ZIP). shpwrite.zip() lo
+   * convierte a Shapefile más abajo, en _exportPackage().
    */
   /**
    * Construye un archivo .xlsx REAL (formato Excel nativo, no CSV),
@@ -4631,7 +4665,7 @@ class SelWorkSessionController {
             Fase: fase,
             Tipo: tipoLabel,
             Comentario: supply?.comment || '',
-            Carpeta_Fotos: folderName,
+            CarpFotos: folderName, // máx. 10 caracteres: límite de nombre de campo del Shapefile (.dbf)
           },
         });
       });
