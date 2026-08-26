@@ -4022,11 +4022,25 @@ function parts(geometries, TYPE) {
     var no = 1;
     if (TYPE === types.geometries.POLYGON || TYPE === types.geometries.POLYLINE)  {
         no = geometries.reduce(function (no, coords) {
-            no += coords.length;
-            if (Array.isArray(coords[0][0][0])) { // multi
-                no += coords.reduce(function (no, rings) {
-                    return no + rings.length - 1; // minus outer
-                }, 0);
+            // FIX: "coords" solo es una lista de partes (anillos de un
+            // Polygon, o sub-líneas de un MultiLineString/MultiPolygon)
+            // cuando sus elementos son a su vez arreglos de puntos. Si
+            // "coords" es una lista plana de puntos [x,y] (un LineString
+            // o Polygon simple, el caso normal de las líneas de
+            // acometida), siempre es UNA sola parte — antes el código
+            // sumaba coords.length (la cantidad de PUNTOS) como si fuera
+            // la cantidad de partes, generando un índice de partes fuera
+            // de rango que corrompía la geometría (se veía la tabla de
+            // atributos pero no el dibujo en ArcGIS).
+            if (Array.isArray(coords[0][0])) {
+                no += coords.length;
+                if (Array.isArray(coords[0][0][0])) { // multi
+                    no += coords.reduce(function (no, rings) {
+                        return no + rings.length - 1; // minus outer
+                    }, 0);
+                }
+            } else {
+                no += 1;
             }
             return no;
         }, 0);
