@@ -194,13 +194,14 @@
   .telemetry .cell .v.err{ color:var(--danger); }
 
   #toast{
-    position:absolute; left:50%; bottom:135px; transform:translate(-50%,140%);
+    position:absolute; left:14px; top:50%; transform:translateY(calc(-50% + 40px));
     background:var(--bar-bg-2); border:1px solid var(--line);
     color:var(--text); font-size:12px; padding:9px 16px; border-radius:8px;
-    z-index:1200; transition:transform .3s ease; box-shadow:0 6px 20px rgba(0,0,0,.5);
-    max-width:86%; text-align:center;
+    z-index:1200; transition:transform .3s ease, opacity .3s ease; opacity:0;
+    box-shadow:0 6px 20px rgba(0,0,0,.5);
+    max-width:64%; text-align:left; pointer-events:none;
   }
-  #toast.show{ transform:translate(-50%,0); }
+  #toast.show{ transform:translateY(-50%); opacity:1; }
 
   .leaflet-control-attribution{
     background:rgba(24,28,34,.85) !important; color:var(--text-dim) !important;
