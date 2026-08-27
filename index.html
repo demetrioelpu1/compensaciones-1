@@ -4491,10 +4491,11 @@ class SelWorkSessionController {
         const supply = supplyId != null ? allSupplies.find((s) => s.id === supplyId) : null;
         if (supply && supply.photos && supply.photos.length) {
           // Todas las carpetas de fotos van anidadas dentro de una
-          // sola carpeta contenedora "carpeta de fotos", junto al
-          // Excel y el Shapefile.
+          // sola carpeta contenedora "CarpFotos" (mismo nombre que la
+          // columna del Shapefile, para que el hipervínculo la
+          // reconozca), junto al Excel y el Shapefile.
           const photoLabels = ['Foto Medidor', 'Foto Cajatoma', 'Foto Fachada'];
-          const folder = zip.folder('carpeta de fotos').folder(folderName);
+          const folder = zip.folder('CarpFotos').folder(folderName);
           supply.photos.forEach((blob, p) => {
             if (blob) folder.file(`${photoLabels[p] || `foto_${p + 1}`}.jpg`, blob);
           });
@@ -4682,16 +4683,13 @@ class SelWorkSessionController {
             Fase: fase,
             Tipo: tipoLabel,
             Comentario: supply?.comment || '',
-            // El NOMBRE de este campo va truncado a "CarpFotos" porque el
-            // Shapefile (.dbf) solo permite 10 caracteres y sin espacios
-            // en el nombre de columna — eso lo impone el formato, no se
-            // puede llamar literal "carpeta de fotos". Para que el
-            // hipervínculo funcione igual, el VALOR de cada fila sí
-            // incluye la ruta relativa completa "carpeta de fotos\..."
-            // (idéntica al nombre real de la carpeta dentro del ZIP), así
-            // que al activar "Hipervínculos usando el campo" → CarpFotos
-            // → Documento, abre directo sin necesitar la calculadora.
-            CarpFotos: `carpeta de fotos\\${folderName}`,
+            // El nombre de columna "CarpFotos" es el máximo permitido
+            // por el Shapefile (.dbf: 10 caracteres, sin espacios). La
+            // carpeta de fotos dentro del ZIP se llama exactamente
+            // igual, "CarpFotos" (ver _exportPackage), así que el valor
+            // aquí solo lleva el código de la subcarpeta — al concatenar
+            // la ruta base + [CarpFotos] en ArcGIS, ambos nombres calzan.
+            CarpFotos: folderName,
           },
         });
       });
