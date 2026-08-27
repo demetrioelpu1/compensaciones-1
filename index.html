@@ -4682,7 +4682,16 @@ class SelWorkSessionController {
             Fase: fase,
             Tipo: tipoLabel,
             Comentario: supply?.comment || '',
-            CarpFotos: folderName, // máx. 10 caracteres: límite de nombre de campo del Shapefile (.dbf)
+            // El NOMBRE de este campo va truncado a "CarpFotos" porque el
+            // Shapefile (.dbf) solo permite 10 caracteres y sin espacios
+            // en el nombre de columna — eso lo impone el formato, no se
+            // puede llamar literal "carpeta de fotos". Para que el
+            // hipervínculo funcione igual, el VALOR de cada fila sí
+            // incluye la ruta relativa completa "carpeta de fotos\..."
+            // (idéntica al nombre real de la carpeta dentro del ZIP), así
+            // que al activar "Hipervínculos usando el campo" → CarpFotos
+            // → Documento, abre directo sin necesitar la calculadora.
+            CarpFotos: `carpeta de fotos\\${folderName}`,
           },
         });
       });
