@@ -1619,8 +1619,10 @@ class MapService {
     if (key === this.currentBase || !this.baseLayers[key]) return;
     this.map.removeLayer(this.baseLayers[this.currentBase]);
     this.baseLayers[key].addTo(this.map);
-    // El mapa base va siempre debajo de todo lo demás
-    this.baseLayers[key].bringToBack();
+    // Nota: no hace falta forzar el orden aquí — Leaflet ya dibuja
+    // los mapas base en su propio "tilePane", que siempre queda
+    // debajo del "overlayPane" (capas GIS, postes, etc.) sin
+    // importar el orden en que se agregaron.
     this.currentBase = key;
     localStorage.setItem('cmp_last_basemap', key);
   }
