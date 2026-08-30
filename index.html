@@ -298,16 +298,17 @@
     margin:2px auto 12px;
   }
   #basemap-sheet .sheet-header{
-    display:flex; align-items:center; justify-content:space-between;
+    display:flex; align-items:center; gap:8px;
   }
   #basemap-sheet .sheet-header h2{
-    margin:0; font-size:16px; font-weight:700;
+    margin:0; font-size:16px; font-weight:700; flex:1; min-width:0;
   }
-  #basemap-sheet .close-btn{
+  #basemap-sheet .close-btn, #basemap-sheet .back-btn{
     width:30px; height:30px; border-radius:8px; background:var(--bar-bg-2);
-    border:1px solid var(--line); color:var(--text);
+    border:1px solid var(--line); color:var(--text); flex-shrink:0;
     display:flex; align-items:center; justify-content:center;
   }
+  #basemap-sheet .back-btn.hidden{ display:none; }
   #basemap-sheet .sheet-subtitle{
     font-family:var(--mono); font-size:10.5px; letter-spacing:.05em;
     color:var(--text-dim); margin:10px 2px 12px;
@@ -371,6 +372,41 @@
   }
   .download-progress-text{
     display:block; font-size:10.5px; color:var(--text-dim); margin-top:4px;
+  }
+
+  .link-btn{
+    background:none; border:none; color:var(--hivis); font-size:12.5px;
+    font-weight:600; padding:4px 2px; cursor:pointer; text-align:left;
+  }
+
+  /* ---------- Galería "Zonas descargadas" (dentro de #basemap-sheet) ---------- */
+  .zone-item{
+    display:flex; align-items:center; gap:10px;
+    background:var(--bar-bg-2); border:1px solid var(--line);
+    border-radius:12px; padding:10px 12px; margin-bottom:8px;
+  }
+  .zone-dot{
+    width:10px; height:10px; border-radius:50%; flex-shrink:0;
+  }
+  .zone-info{ flex:1; min-width:0; }
+  .zone-name{
+    font-size:13px; font-weight:600; background:none; border:none;
+    color:var(--text); width:100%; padding:2px 0;
+    border-bottom:1px dashed transparent;
+  }
+  .zone-name:focus{ outline:none; border-bottom-color:var(--hivis); }
+  .zone-meta{
+    font-size:11px; color:var(--text-dim); margin-top:2px;
+  }
+  .zone-delete-btn{
+    width:32px; height:32px; border-radius:9px; flex-shrink:0;
+    background:none; border:1px solid var(--line); color:var(--danger);
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
+  .zone-delete-btn:active{ background:rgba(228,87,46,.15); }
+  .zones-empty{
+    font-size:12.5px; color:var(--text-dim); text-align:center; padding:24px 8px;
+    line-height:1.5;
   }
 
   /* Panel lateral deslizable */
@@ -1214,14 +1250,17 @@
     <div id="basemap-sheet">
       <div class="sheet-handle"></div>
       <div class="sheet-header">
-        <h2>🗺️ Mapas base</h2>
+        <button type="button" class="back-btn hidden" id="btn-back-basemap-sheet" title="Volver">
+          <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" fill="none" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <h2 id="basemap-sheet-title">🗺️ Mapas base</h2>
         <button type="button" class="close-btn" id="btn-close-basemap-sheet">
           <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
-      <p class="sheet-subtitle">ELIGE EL MAPA PARA TRABAJAR EN CAMPO</p>
+      <p class="sheet-subtitle" id="basemap-sheet-subtitle">ELIGE EL MAPA PARA TRABAJAR EN CAMPO</p>
       <div class="basemap-list" id="basemap-list"></div>
-      <p class="sheet-footnote">Los mapas marcados con <span class="pill-saved">Guardado</span> tienen zonas descargadas y funcionan sin internet.</p>
+      <div class="sheet-footnote" id="basemap-sheet-footer"></div>
     </div>
 
     <button id="btn-sel-files" title="Archivos SEL">
@@ -1611,15 +1650,21 @@ class MapService {
 class TileCacheService {
   constructor() {
     this.cacheName = 'cmp-map-tiles-v1';
-    this.manifestKey = 'cmp_offline_basemaps_v1';
+    // v2: ahora cada descarga es una "zona" independiente (con su
+    // propio nombre, fecha y lista exacta de teselas), en vez de un
+    // solo estado por mapa base que se pisaba con cada descarga
+    // nueva. Así se pueden guardar varias zonas de trabajo a la vez
+    // y borrarlas una por una (ver getAllZones / deleteZone).
+    this.manifestKey = 'cmp_offline_zones_v2';
     this.maxTilesPerDownload = 1500; // límite prudente de tiempo/espacio
   }
 
   _getManifest() {
     try {
-      return JSON.parse(localStorage.getItem(this.manifestKey) || '{}');
+      const parsed = JSON.parse(localStorage.getItem(this.manifestKey) || '{}');
+      return { zones: Array.isArray(parsed.zones) ? parsed.zones : [] };
     } catch {
-      return {};
+      return { zones: [] };
     }
   }
 
@@ -1627,12 +1672,65 @@ class TileCacheService {
     localStorage.setItem(this.manifestKey, JSON.stringify(manifest));
   }
 
-  isSaved(key) {
-    return !!this._getManifest()[key];
+  // Todas las zonas guardadas para un mapa base (hybrid/streets/topo),
+  // más recientes primero.
+  getZonesFor(basemapKey) {
+    return this._getManifest()
+      .zones.filter((z) => z.basemapKey === basemapKey)
+      .sort((a, b) => (a.savedAt < b.savedAt ? 1 : -1));
   }
 
-  getSavedInfo(key) {
-    return this._getManifest()[key] || null;
+  // Todas las zonas guardadas, de cualquier mapa base — para la
+  // galería "Zonas descargadas".
+  getAllZones() {
+    return this._getManifest().zones.slice().sort((a, b) => (a.savedAt < b.savedAt ? 1 : -1));
+  }
+
+  isSaved(key) {
+    return this.getZonesFor(key).length > 0;
+  }
+
+  renameZone(zoneId, newName) {
+    const manifest = this._getManifest();
+    const zone = manifest.zones.find((z) => z.id === zoneId);
+    if (!zone || !newName || !newName.trim()) return false;
+    zone.name = newName.trim();
+    this._saveManifest(manifest);
+    return true;
+  }
+
+  // Borra una zona guardada: quita su registro y libera del celular
+  // solo las teselas que ninguna OTRA zona que siga guardada necesite
+  // (dos zonas descargadas pueden solaparse un poco en el mapa).
+  async deleteZone(zoneId) {
+    const manifest = this._getManifest();
+    const zone = manifest.zones.find((z) => z.id === zoneId);
+    if (!zone) return { ok: false };
+
+    manifest.zones = manifest.zones.filter((z) => z.id !== zoneId);
+
+    const stillNeeded = new Set();
+    manifest.zones.forEach((z) => (z.tileUrls || []).forEach((u) => stillNeeded.add(u)));
+
+    const cache = await caches.open(this.cacheName);
+    let freed = 0;
+    for (const url of zone.tileUrls || []) {
+      if (!stillNeeded.has(url)) {
+        const deleted = await cache.delete(url);
+        if (deleted) freed++;
+      }
+    }
+
+    this._saveManifest(manifest);
+    return { ok: true, freed, zone };
+  }
+
+  _defaultZoneName(entry, existingZones) {
+    const sameType = existingZones.filter((z) => z.basemapKey === entry.key).length;
+    const now = new Date();
+    const fecha = now.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit' });
+    const hora = now.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+    return `Zona ${sameType + 1} · ${fecha} ${hora}`;
   }
 
   // Matemática estándar de "teselas" (slippy map): convierte
@@ -1688,9 +1786,11 @@ class TileCacheService {
 
   // Descarga (si hace falta; las que ya estén guardadas no se
   // repiten) todas las teselas de la zona visible del mapa para el
-  // mapa base indicado. onProgress(hechas, total) se llama en cada
-  // tesela para poder mostrar una barra de avance.
-  async downloadArea(entry, map, { onProgress } = {}) {
+  // mapa base indicado, y las guarda como una ZONA nueva en la
+  // galería (con nombre, fecha y su propia lista de teselas — ver
+  // getAllZones / deleteZone). onProgress(hechas, total) se llama en
+  // cada tesela para poder mostrar una barra de avance.
+  async downloadArea(entry, map, { onProgress, name } = {}) {
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       return { ok: false, reason: 'offline' };
     }
@@ -1702,7 +1802,7 @@ class TileCacheService {
 
     const cache = await caches.open(this.cacheName);
     let done = 0;
-    let successCount = 0;
+    const cachedUrls = [];
     const total = tileUrls.length;
     onProgress && onProgress(0, total);
 
@@ -1726,12 +1826,12 @@ class TileCacheService {
         try {
           const already = await cache.match(url);
           if (already) {
-            successCount++;
+            cachedUrls.push(url);
           } else {
             const resp = await fetch(url, { mode: 'no-cors' });
             if (resp && (resp.ok || resp.type === 'opaque')) {
               await cache.put(url, resp);
-              successCount++;
+              cachedUrls.push(url);
             }
           }
         } catch {
@@ -1746,20 +1846,25 @@ class TileCacheService {
       Array.from({ length: Math.min(CONCURRENCY, tileUrls.length) }, () => worker())
     );
 
-    if (successCount === 0) {
+    if (cachedUrls.length === 0) {
       return { ok: false, reason: 'network' };
     }
 
     const manifest = this._getManifest();
-    manifest[entry.key] = {
+    const zone = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      basemapKey: entry.key,
+      name: name && name.trim() ? name.trim() : this._defaultZoneName(entry, manifest.zones),
       savedAt: new Date().toISOString(),
-      tileCount: successCount,
+      tileCount: cachedUrls.length,
       zoom: Math.round(map.getZoom()),
       center: map.getCenter(),
+      tileUrls: cachedUrls,
     };
+    manifest.zones.push(zone);
     this._saveManifest(manifest);
 
-    return { ok: true, tileCount: successCount, partial: successCount < total, total };
+    return { ok: true, tileCount: cachedUrls.length, partial: cachedUrls.length < total, total, zone };
   }
 }
 
@@ -3111,7 +3216,12 @@ class BasemapSheetController {
     this.sheet = document.getElementById('basemap-sheet');
     this.backdrop = document.getElementById('basemap-sheet-backdrop');
     this.list = document.getElementById('basemap-list');
+    this.title = document.getElementById('basemap-sheet-title');
+    this.subtitle = document.getElementById('basemap-sheet-subtitle');
+    this.footer = document.getElementById('basemap-sheet-footer');
     this.closeBtn = document.getElementById('btn-close-basemap-sheet');
+    this.backBtn = document.getElementById('btn-back-basemap-sheet');
+    this.view = 'basemaps'; // 'basemaps' | 'zones'
 
     const current = BASEMAP_CATALOG.find((e) => e.key === this.mapService.currentBase);
     if (current) this.label.textContent = current.short;
@@ -3121,9 +3231,11 @@ class BasemapSheetController {
     this.btn.addEventListener('click', () => this.open());
     this.closeBtn.addEventListener('click', () => this.close());
     this.backdrop.addEventListener('click', () => this.close());
+    this.backBtn.addEventListener('click', () => { this.view = 'basemaps'; this._render(); });
   }
 
   open() {
+    this.view = 'basemaps';
     this._render();
     this.sheet.classList.add('open');
     this.backdrop.classList.add('open');
@@ -3135,6 +3247,18 @@ class BasemapSheetController {
   }
 
   _render() {
+    this.backBtn.classList.toggle('hidden', this.view !== 'zones');
+    if (this.view === 'zones') {
+      this._renderZonesView();
+    } else {
+      this._renderBasemapsView();
+    }
+  }
+
+  _renderBasemapsView() {
+    this.title.textContent = '🗺️ Mapas base';
+    this.subtitle.textContent = 'ELIGE EL MAPA PARA TRABAJAR EN CAMPO';
+
     this.list.innerHTML = '';
     BASEMAP_CATALOG.forEach((entry) => {
       const saved = this.tileCache.isSaved(entry.key);
@@ -3168,6 +3292,72 @@ class BasemapSheetController {
       item.querySelector('.btn-download-area').addEventListener('click', (e) => {
         e.stopPropagation();
         this._download(entry, item);
+      });
+
+      this.list.appendChild(item);
+    });
+
+    const zoneCount = this.tileCache.getAllZones().length;
+    this.footer.innerHTML = `
+      <p style="margin:0 2px 10px;">Los mapas marcados con <span class="pill-saved">Guardado</span> tienen al menos una zona descargada y funcionan sin internet.</p>
+      <button type="button" class="link-btn" id="btn-view-zones">📦 Ver zonas descargadas${zoneCount ? ` (${zoneCount})` : ''}</button>
+    `;
+    this.footer.querySelector('#btn-view-zones').addEventListener('click', () => {
+      this.view = 'zones';
+      this._render();
+    });
+  }
+
+  _renderZonesView() {
+    this.title.textContent = '📦 Zonas descargadas';
+    this.subtitle.textContent = 'ASÍ SE VEN SIN INTERNET — BORRE LAS QUE YA NO USE';
+    this.footer.innerHTML = '';
+
+    const zones = this.tileCache.getAllZones();
+    this.list.innerHTML = '';
+
+    if (!zones.length) {
+      this.list.innerHTML = `<p class="zones-empty">Todavía no descargó ninguna zona.<br>Vuelva y toque "Descargar esta zona" en el mapa que necesite.</p>`;
+      return;
+    }
+
+    zones.forEach((zone) => {
+      const entry = BASEMAP_CATALOG.find((e) => e.key === zone.basemapKey);
+      const dotColor = entry ? entry.swatch : '#666';
+      const fecha = new Date(zone.savedAt).toLocaleString('es-PE', {
+        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+      });
+
+      const item = document.createElement('div');
+      item.className = 'zone-item';
+      item.innerHTML = `
+        <div class="zone-dot" style="background:${dotColor}"></div>
+        <div class="zone-info">
+          <input type="text" class="zone-name" value="${zone.name.replace(/"/g, '&quot;')}" />
+          <div class="zone-meta">${entry ? entry.title : zone.basemapKey} · ${zone.tileCount} teselas · ${fecha}</div>
+        </div>
+        <button type="button" class="zone-delete-btn" title="Borrar esta zona">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+        </button>
+      `;
+
+      const nameInput = item.querySelector('.zone-name');
+      const commitRename = () => {
+        if (nameInput.value.trim() && nameInput.value.trim() !== zone.name) {
+          this.tileCache.renameZone(zone.id, nameInput.value);
+        } else {
+          nameInput.value = zone.name; // no lo deja en blanco
+        }
+      };
+      nameInput.addEventListener('blur', commitRename);
+      nameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') nameInput.blur();
+      });
+
+      item.querySelector('.zone-delete-btn').addEventListener('click', async () => {
+        if (!window.confirm(`¿Borrar la zona "${zone.name}"? Dejará de verse sin internet ahí. Esta acción no se puede deshacer.`)) return;
+        await this.tileCache.deleteZone(zone.id);
+        this._render();
       });
 
       this.list.appendChild(item);
