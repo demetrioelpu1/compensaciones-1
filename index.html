@@ -1521,9 +1521,12 @@ const BASEMAP_CATALOG = [
     title: 'Topográfico',
     desc: 'Curvas de nivel y relieve. Útil en zonas rurales o de cerro.',
     swatch: 'linear-gradient(135deg,#8a9f6e,#5f7a4a)',
-    maxZoom: 19,
+    // OpenTopoMap: mismo mapa (calles + curvas de nivel muy nítidas)
+    // que el técnico ya conocía de "Mantenimiento en Campo" — más
+    // detallado que el topográfico de Esri que se usaba antes aquí.
+    maxZoom: 17, // límite real de los servidores de OpenTopoMap
     urls: [
-      { template: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}' },
+      { template: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', subdomains: 'abc' },
     ],
   },
 ];
@@ -2453,6 +2456,7 @@ class GISLayerService {
 
     // Estado por categoría: { group, visible, count, fileNames, geojson }
     this.state = {};
+    const savedVisibility = this._loadVisibilityPrefs();
     GISLayerService.CATEGORIES.forEach(cat => {
       this.state[cat.id] = {
         // Puntos (postes, subestaciones) usan un grupo con clustering
@@ -2466,7 +2470,10 @@ class GISLayerService {
               iconCreateFunction: (cluster) => this._buildClusterIcon(cluster, cat),
             })
           : L.layerGroup(),
-        visible: true,
+        // Se respeta lo que el técnico dejó marcado la última vez
+        // (ver _loadVisibilityPrefs / toggleCategory) — si nunca tocó
+        // el interruptor de esta capa, arranca visible por defecto.
+        visible: savedVisibility[cat.id] !== undefined ? savedVisibility[cat.id] : true,
         count: 0,
         fileNames: [],
         geojson: { type: 'FeatureCollection', features: [] }, // acumulado persistido
@@ -2606,7 +2613,25 @@ class GISLayerService {
     } else {
       this.map.removeLayer(st.group);
     }
+    this._saveVisibilityPref(categoryId, st.visible);
     this._notify();
+  }
+
+  // Recuerda (en este celular) qué capas dejó encendidas/apagadas el
+  // técnico, para que al cerrar y volver a abrir la app queden tal
+  // como las dejó, en vez de reiniciarse todas encendidas.
+  _loadVisibilityPrefs() {
+    try {
+      return JSON.parse(localStorage.getItem('cmp_layer_visibility') || '{}');
+    } catch {
+      return {};
+    }
+  }
+
+  _saveVisibilityPref(categoryId, visible) {
+    const prefs = this._loadVisibilityPrefs();
+    prefs[categoryId] = visible;
+    localStorage.setItem('cmp_layer_visibility', JSON.stringify(prefs));
   }
 
   getTotalFeatureCount() {
