@@ -20,7 +20,7 @@ const SHARE_CACHE = 'catastro-share-cache-v1';
 // Mismo nombre que usa TileCacheService en index.html — ambos leen
 // y escriben en la misma caja de Cache Storage.
 const TILE_CACHE = 'cmp-map-tiles-v1';
-const TILE_HOSTS = ['tile.openstreetmap.org', 'server.arcgisonline.com', 'tile.opentopomap.org'];
+const TILE_HOSTS = ['tile.openstreetmap.org', 'server.arcgisonline.com', 'tile.opentopomap.org', 'maps.hereapi.com'];
 
 self.addEventListener('install', () => {
   self.skipWaiting();

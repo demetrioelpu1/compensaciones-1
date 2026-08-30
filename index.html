@@ -1526,10 +1526,18 @@
 // ---------------------------------------------------------------
 // Catálogo de mapas base: cada uno declara sus plantillas de URL
 // de teselas (para poder descargarlas para uso sin internet, ver
-// TileCacheService) y cómo se arma en Leaflet. Todos son gratuitos
-// y sin necesidad de clave de API — igual que el satelital que ya
-// se usaba antes.
+// TileCacheService) y cómo se arma en Leaflet. La mayoría son
+// gratuitos y sin clave de API; el "Híbrido HERE" sí necesita una
+// clave (ver HERE_API_KEY abajo), provista por el propio técnico.
 // ---------------------------------------------------------------
+
+// Clave de HERE Maps (plan gratuito "Freemium", ~30,000 cargas al
+// mes). Se usa solo para el mapa "Híbrido HERE" — el resto de
+// mapas no la necesitan. Si en algún momento hay que cambiarla
+// (por ejemplo si se genera una nueva clave), solo hay que
+// reemplazar este valor.
+const HERE_API_KEY = 'yzyCUgtV7yQeou5Fey8JLrzuK_uxgmBc8RygZ6dQ8B0';
+
 const BASEMAP_CATALOG = [
   {
     key: 'hybrid',
@@ -1541,6 +1549,17 @@ const BASEMAP_CATALOG = [
     urls: [
       { template: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}' },
       { template: 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}' },
+    ],
+  },
+  {
+    key: 'hereHybrid',
+    short: 'HERE',
+    title: 'Híbrido HERE',
+    desc: 'Satélite + calles con mayor nivel de detalle (HERE Maps). Úselo si el mapa Híbrido no muestra suficiente detalle en su zona.',
+    swatch: 'linear-gradient(135deg,#00afaa,#274b8f)',
+    maxZoom: 19,
+    urls: [
+      { template: `https://maps.hereapi.com/v3/base/mc/{z}/{x}/{y}/png8?style=explore.satellite.day&apikey=${HERE_API_KEY}` },
     ],
   },
   {
@@ -1586,7 +1605,7 @@ class MapService {
       closePopupOnClick: false,
     });
 
-    // Tres mapas base intercambiables, armados desde BASEMAP_CATALOG.
+    // Mapas base intercambiables, armados desde BASEMAP_CATALOG.
     // "hybrid" combina dos teselas (imagen satelital + rótulos) en un
     // solo grupo, para que se muevan/descarguen juntas. Solo uno está
     // agregado al mapa a la vez. La última selección del técnico se
