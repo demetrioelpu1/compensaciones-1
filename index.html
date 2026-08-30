@@ -408,6 +408,13 @@
     font-size:12.5px; color:var(--text-dim); text-align:center; padding:24px 8px;
     line-height:1.5;
   }
+  .btn-delete-all-zones{
+    display:flex; align-items:center; justify-content:center; gap:6px;
+    width:100%; background:none; border:1px solid rgba(228,87,46,.4); color:var(--danger);
+    font-size:12px; font-weight:600; padding:10px 10px; border-radius:10px;
+    cursor:pointer; margin-top:2px;
+  }
+  .btn-delete-all-zones:active{ background:rgba(228,87,46,.15); }
 
   /* Panel lateral deslizable */
   #layers-panel{
@@ -1744,6 +1751,28 @@ class TileCacheService {
 
     this._saveManifest(manifest);
     return { ok: true, freed, zone };
+  }
+
+  // Borra TODAS las zonas guardadas de una sola vez — para cuando ya
+  // se trabajaron todos los planos recortados y se quiere liberar
+  // espacio sin tener que borrarlas una por una.
+  async deleteAllZones() {
+    const manifest = this._getManifest();
+    const zones = manifest.zones;
+    if (!zones.length) return { ok: true, count: 0, freed: 0 };
+
+    const allUrls = new Set();
+    zones.forEach((z) => (z.tileUrls || []).forEach((u) => allUrls.add(u)));
+
+    const cache = await caches.open(this.cacheName);
+    let freed = 0;
+    for (const url of allUrls) {
+      const deleted = await cache.delete(url);
+      if (deleted) freed++;
+    }
+
+    this._saveManifest({ zones: [] });
+    return { ok: true, count: zones.length, freed };
   }
 
   _defaultZoneName(entry, existingZones) {
@@ -3382,6 +3411,20 @@ class BasemapSheetController {
       });
 
       this.list.appendChild(item);
+    });
+
+    // Botón para borrar TODAS las zonas de una vez — útil cuando ya
+    // se trabajaron todos los planos recortados y se quiere liberar
+    // espacio sin borrarlos uno por uno.
+    this.footer.innerHTML = `
+      <button type="button" class="btn-delete-all-zones" id="btn-delete-all-zones">
+        🗑️ Borrar todas las zonas guardadas (${zones.length})
+      </button>
+    `;
+    this.footer.querySelector('#btn-delete-all-zones').addEventListener('click', async () => {
+      if (!window.confirm(`¿Borrar las ${zones.length} zonas guardadas? Ningún mapa quedará disponible sin internet hasta que las vuelva a descargar. Esta acción no se puede deshacer.`)) return;
+      await this.tileCache.deleteAllZones();
+      this._render();
     });
   }
 
