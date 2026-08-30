@@ -273,6 +273,106 @@
     border:2px solid #0e1116;
   }
 
+  /* ============================================================
+     HOJA "MAPAS BASE" (bottom sheet)
+     ============================================================ */
+  #basemap-sheet-backdrop{
+    position:absolute; inset:0; background:rgba(0,0,0,.55);
+    z-index:1400; opacity:0; pointer-events:none; transition:opacity .2s ease;
+  }
+  #basemap-sheet-backdrop.open{ opacity:1; pointer-events:auto; }
+
+  #basemap-sheet{
+    position:absolute; left:0; right:0; bottom:0;
+    max-height:76vh; overflow-y:auto;
+    background:var(--bar-bg); border-top:1px solid var(--line);
+    border-radius:18px 18px 0 0;
+    box-shadow:0 -8px 28px rgba(0,0,0,.45);
+    z-index:1450; padding:8px 16px 18px;
+    transform:translateY(105%); transition:transform .25s ease;
+  }
+  #basemap-sheet.open{ transform:translateY(0); }
+
+  #basemap-sheet .sheet-handle{
+    width:40px; height:4px; border-radius:3px; background:var(--line);
+    margin:2px auto 12px;
+  }
+  #basemap-sheet .sheet-header{
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  #basemap-sheet .sheet-header h2{
+    margin:0; font-size:16px; font-weight:700;
+  }
+  #basemap-sheet .close-btn{
+    width:30px; height:30px; border-radius:8px; background:var(--bar-bg-2);
+    border:1px solid var(--line); color:var(--text);
+    display:flex; align-items:center; justify-content:center;
+  }
+  #basemap-sheet .sheet-subtitle{
+    font-family:var(--mono); font-size:10.5px; letter-spacing:.05em;
+    color:var(--text-dim); margin:10px 2px 12px;
+  }
+  #basemap-sheet .sheet-footnote{
+    font-size:11.5px; color:var(--text-dim); margin:14px 2px 0; line-height:1.5;
+  }
+
+  .pill-saved{
+    display:inline-flex; align-items:center; font-size:10px; font-weight:700;
+    color:#173a26; background:var(--ok); padding:2px 8px; border-radius:9px;
+    white-space:nowrap;
+  }
+  .pill-saved.hidden{ display:none; }
+
+  .basemap-item{
+    display:flex; align-items:flex-start; gap:12px;
+    background:var(--bar-bg-2); border:1px solid var(--line);
+    border-radius:14px; padding:12px; margin-bottom:10px;
+  }
+  .basemap-item.active{ border-color:var(--hivis); box-shadow:0 0 0 1px var(--hivis) inset; }
+
+  .basemap-swatch{
+    width:44px; height:44px; border-radius:10px; flex-shrink:0;
+    background:#333; cursor:pointer;
+  }
+
+  .basemap-info{ flex:1; min-width:0; cursor:pointer; }
+  .basemap-title-row{
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  }
+  .basemap-title-row strong{ font-size:14px; }
+  .basemap-info p{
+    margin:4px 0 8px; font-size:12px; color:var(--text-dim); line-height:1.4;
+  }
+
+  .basemap-radio{
+    width:20px; height:20px; border-radius:50%; border:2px solid var(--line);
+    flex-shrink:0; margin-top:2px; cursor:pointer; position:relative;
+  }
+  .basemap-item.active .basemap-radio{ border-color:var(--hivis); }
+  .basemap-item.active .basemap-radio::after{
+    content:''; position:absolute; inset:3px; border-radius:50%; background:var(--hivis);
+  }
+
+  .btn-download-area{
+    background:none; border:1px solid var(--line); color:var(--text);
+    font-size:11px; padding:6px 10px; border-radius:8px; cursor:pointer;
+  }
+  .btn-download-area:active{ background:#282e38; }
+  .btn-download-area:disabled{ opacity:.6; }
+
+  .download-progress{ margin-top:8px; }
+  .download-progress.hidden{ display:none; }
+  .download-progress-bar-track{
+    height:5px; border-radius:3px; background:#0e1116; overflow:hidden;
+  }
+  .download-progress-bar{
+    height:100%; width:0%; background:var(--hivis); border-radius:3px;
+    transition:width .15s ease;
+  }
+  .download-progress-text{
+    display:block; font-size:10.5px; color:var(--text-dim); margin-top:4px;
+  }
+
   /* Panel lateral deslizable */
   #layers-panel{
     position:absolute; top:0; right:0; bottom:0;
@@ -1107,8 +1207,22 @@
 
     <button id="btn-basemap" title="Cambiar mapa base">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 010 20 15 15 0 010-20z"/></svg>
-      <span class="basemap-label" id="basemap-label">SAT</span>
+      <span class="basemap-label" id="basemap-label">HÍB</span>
     </button>
+
+    <div id="basemap-sheet-backdrop"></div>
+    <div id="basemap-sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <h2>🗺️ Mapas base</h2>
+        <button type="button" class="close-btn" id="btn-close-basemap-sheet">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <p class="sheet-subtitle">ELIGE EL MAPA PARA TRABAJAR EN CAMPO</p>
+      <div class="basemap-list" id="basemap-list"></div>
+      <p class="sheet-footnote">Los mapas marcados con <span class="pill-saved">Guardado</span> tienen zonas descargadas y funcionan sin internet.</p>
+    </div>
 
     <button id="btn-sel-files" title="Archivos SEL">
       <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -1371,6 +1485,50 @@
    ============================================================ */
 
 // ---------------------------------------------------------------
+// Catálogo de mapas base: cada uno declara sus plantillas de URL
+// de teselas (para poder descargarlas para uso sin internet, ver
+// TileCacheService) y cómo se arma en Leaflet. Todos son gratuitos
+// y sin necesidad de clave de API — igual que el satelital que ya
+// se usaba antes.
+// ---------------------------------------------------------------
+const BASEMAP_CATALOG = [
+  {
+    key: 'hybrid',
+    short: 'HÍB',
+    title: 'Híbrido',
+    desc: 'Satélite + nombres de calles y lugares. Recomendado para campo.',
+    swatch: 'linear-gradient(135deg,#3a5a2e,#7a8f4a)',
+    maxZoom: 19,
+    urls: [
+      { template: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}' },
+      { template: 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}' },
+    ],
+  },
+  {
+    key: 'streets',
+    short: 'CALLE',
+    title: 'Calles',
+    desc: 'Callejero estándar, útil para ubicar direcciones y postes.',
+    swatch: '#e7e4da',
+    maxZoom: 19,
+    urls: [
+      { template: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', subdomains: 'abc' },
+    ],
+  },
+  {
+    key: 'topo',
+    short: 'TOPO',
+    title: 'Topográfico',
+    desc: 'Curvas de nivel y relieve. Útil en zonas rurales o de cerro.',
+    swatch: 'linear-gradient(135deg,#8a9f6e,#5f7a4a)',
+    maxZoom: 19,
+    urls: [
+      { template: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}' },
+    ],
+  },
+];
+
+// ---------------------------------------------------------------
 // MapService: responsable únicamente del mapa base y sus capas.
 // ---------------------------------------------------------------
 class MapService {
@@ -1386,22 +1544,25 @@ class MapService {
       closePopupOnClick: false,
     });
 
-    // Dos mapas base intercambiables: calles (OpenStreetMap) y
-    // satelital (Esri World Imagery, gratuito y sin necesidad de
-    // clave de API). Solo uno está agregado al mapa a la vez.
-    this.baseLayers = {
-      streets: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '&copy; OpenStreetMap contributors',
-      }),
-      satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-        maxZoom: 21, // por encima del mapa de calles (19), para que el acercamiento se sienta mayor, no solo igual
-        maxNativeZoom: 19, // Esri sí ofrece nitidez real hasta este nivel en zonas urbanas — antes estaba en 18, de más
-        attribution: 'Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics',
-      }),
-    };
-    this.currentBase = 'streets';
-    this.baseLayers.streets.addTo(this.map);
+    // Tres mapas base intercambiables, armados desde BASEMAP_CATALOG.
+    // "hybrid" combina dos teselas (imagen satelital + rótulos) en un
+    // solo grupo, para que se muevan/descarguen juntas. Solo uno está
+    // agregado al mapa a la vez. La última selección del técnico se
+    // recuerda entre sesiones (localStorage), para no reiniciar
+    // siempre en "Calles".
+    this.baseLayers = {};
+    BASEMAP_CATALOG.forEach((entry) => {
+      const layers = entry.urls.map((u) => L.tileLayer(u.template, {
+        maxZoom: entry.maxZoom,
+        subdomains: u.subdomains || 'abc',
+        attribution: '&copy; OpenStreetMap contributors, Esri',
+      }));
+      this.baseLayers[entry.key] = layers.length === 1 ? layers[0] : L.layerGroup(layers);
+    });
+
+    const remembered = localStorage.getItem('cmp_last_basemap');
+    this.currentBase = this.baseLayers[remembered] ? remembered : 'hybrid';
+    this.baseLayers[this.currentBase].addTo(this.map);
 
     // Grupo reservado para capas GIS externas (Módulo 2: postes,
     // subestaciones, líneas cargadas desde KMZ/KML/GeoJSON).
@@ -1419,12 +1580,7 @@ class MapService {
     // El mapa base va siempre debajo de todo lo demás
     this.baseLayers[key].bringToBack();
     this.currentBase = key;
-  }
-
-  toggleBaseLayer() {
-    const next = this.currentBase === 'streets' ? 'satellite' : 'streets';
-    this.setBaseLayer(next);
-    return next;
+    localStorage.setItem('cmp_last_basemap', key);
   }
 
   panTo(lat, lng, zoom) {
@@ -1433,6 +1589,174 @@ class MapService {
 
   getMap() {
     return this.map;
+  }
+}
+
+// ---------------------------------------------------------------
+// TileCacheService: descarga y guarda en el celular las teselas
+// (imágenes) del mapa base que el técnico está viendo, usando la
+// Cache Storage del navegador — la misma tecnología con la que
+// funcionan las apps que trabajan sin internet. Una vez guardadas,
+// el Service Worker (sw.js) las sirve automáticamente cuando no hay
+// señal, sin ningún paso adicional del técnico.
+//
+// Para no llenar el celular de teselas ni demorar la descarga, solo
+// baja la zona que se ve en pantalla en ese momento, en el nivel de
+// acercamiento actual más un par de niveles extra (para poder
+// acercar más en campo y seguir viendo el mapa).
+// ---------------------------------------------------------------
+class TileCacheService {
+  constructor() {
+    this.cacheName = 'cmp-map-tiles-v1';
+    this.manifestKey = 'cmp_offline_basemaps_v1';
+    this.maxTilesPerDownload = 1500; // límite prudente de tiempo/espacio
+  }
+
+  _getManifest() {
+    try {
+      return JSON.parse(localStorage.getItem(this.manifestKey) || '{}');
+    } catch {
+      return {};
+    }
+  }
+
+  _saveManifest(manifest) {
+    localStorage.setItem(this.manifestKey, JSON.stringify(manifest));
+  }
+
+  isSaved(key) {
+    return !!this._getManifest()[key];
+  }
+
+  getSavedInfo(key) {
+    return this._getManifest()[key] || null;
+  }
+
+  // Matemática estándar de "teselas" (slippy map): convierte
+  // lat/lng a la fila/columna de tesela que le corresponde en un
+  // nivel de zoom dado.
+  _lngLatToTile(lng, lat, z) {
+    const n = Math.pow(2, z);
+    const x = Math.floor(((lng + 180) / 360) * n);
+    const latRad = (lat * Math.PI) / 180;
+    const y = Math.floor(
+      ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n
+    );
+    return { x: Math.min(Math.max(x, 0), n - 1), y: Math.min(Math.max(y, 0), n - 1) };
+  }
+
+  _zoomLevelsFor(map, maxZoom) {
+    const current = Math.round(map.getZoom());
+    const levels = [];
+    for (let dz = -1; dz <= 2; dz++) {
+      const z = current + dz;
+      if (z >= 10 && z <= maxZoom) levels.push(z);
+    }
+    return [...new Set(levels)];
+  }
+
+  _buildTileList(entry, map) {
+    const bounds = map.getBounds();
+    const zooms = this._zoomLevelsFor(map, entry.maxZoom);
+    const tiles = [];
+    zooms.forEach((z) => {
+      const nw = this._lngLatToTile(bounds.getWest(), bounds.getNorth(), z);
+      const se = this._lngLatToTile(bounds.getEast(), bounds.getSouth(), z);
+      for (let x = nw.x; x <= se.x; x++) {
+        for (let y = nw.y; y <= se.y; y++) {
+          entry.urls.forEach((u) => {
+            tiles.push(this._resolveUrl(u, x, y, z));
+          });
+        }
+      }
+    });
+    return tiles;
+  }
+
+  _resolveUrl(u, x, y, z) {
+    let url = u.template.replace('{z}', z).replace('{x}', x).replace('{y}', y);
+    if (url.includes('{s}')) {
+      const subs = (u.subdomains || 'abc').split('');
+      const sub = subs[(x + y) % subs.length];
+      url = url.replace('{s}', sub);
+    }
+    return url;
+  }
+
+  // Descarga (si hace falta; las que ya estén guardadas no se
+  // repiten) todas las teselas de la zona visible del mapa para el
+  // mapa base indicado. onProgress(hechas, total) se llama en cada
+  // tesela para poder mostrar una barra de avance.
+  async downloadArea(entry, map, { onProgress } = {}) {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      return { ok: false, reason: 'offline' };
+    }
+
+    const tileUrls = this._buildTileList(entry, map);
+    if (tileUrls.length > this.maxTilesPerDownload) {
+      return { ok: false, reason: 'too_many', count: tileUrls.length };
+    }
+
+    const cache = await caches.open(this.cacheName);
+    let done = 0;
+    let successCount = 0;
+    const total = tileUrls.length;
+    onProgress && onProgress(0, total);
+
+    // Descarga con un poco de concurrencia (6 a la vez) para que no
+    // demore demasiado, pero sin saturar la conexión del celular.
+    //
+    // IMPORTANTE: los servidores de teselas (OpenStreetMap, Esri) no
+    // envían cabeceras CORS en sus respuestas — están pensados para
+    // cargarse como imágenes (<img>), no para leerse con fetch(). Por
+    // eso el pedido va con { mode: 'no-cors' }: el navegador entrega
+    // una respuesta "opaca" (no se puede leer su contenido desde
+    // JavaScript, pero sí guardarla en la Cache Storage y luego
+    // servirla de vuelta al mapa). Sin esto, fetch() rechaza el
+    // pedido por CORS y no se descarga nada, aunque parezca que sí.
+    const CONCURRENCY = 6;
+    let index = 0;
+
+    async function worker() {
+      while (index < tileUrls.length) {
+        const url = tileUrls[index++];
+        try {
+          const already = await cache.match(url);
+          if (already) {
+            successCount++;
+          } else {
+            const resp = await fetch(url, { mode: 'no-cors' });
+            if (resp && (resp.ok || resp.type === 'opaque')) {
+              await cache.put(url, resp);
+              successCount++;
+            }
+          }
+        } catch {
+          // sin conexión a esa tesela puntual: se sigue con las demás
+        }
+        done++;
+        onProgress && onProgress(done, total);
+      }
+    }
+
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, tileUrls.length) }, () => worker())
+    );
+
+    if (successCount === 0) {
+      return { ok: false, reason: 'network' };
+    }
+
+    const manifest = this._getManifest();
+    manifest[entry.key] = {
+      savedAt: new Date().toISOString(),
+      tileCount: successCount,
+      zoom: Math.round(map.getZoom()),
+      center: map.getCenter(),
+    };
+    this._saveManifest(manifest);
+
+    return { ok: true, tileCount: successCount, partial: successCount < total, total };
   }
 }
 
@@ -2750,22 +3074,127 @@ class PendingShareController {
 // AppController: punto único de arranque.
 // ---------------------------------------------------------------
 // ---------------------------------------------------------------
-// BasemapToggleController: conecta el botón flotante con
-// MapService.toggleBaseLayer(), y actualiza la etiqueta para
-// mostrar hacia qué mapa se va a cambiar al tocarlo.
+// BasemapSheetController: conecta el botón flotante con la hoja
+// "Mapas base" (lista de mapas + descarga para uso sin internet).
 // ---------------------------------------------------------------
-class BasemapToggleController {
-  constructor(mapService) {
+class BasemapSheetController {
+  constructor(mapService, tileCacheService) {
     this.mapService = mapService;
+    this.tileCache = tileCacheService;
     this.btn = document.getElementById('btn-basemap');
     this.label = document.getElementById('basemap-label');
+    this.sheet = document.getElementById('basemap-sheet');
+    this.backdrop = document.getElementById('basemap-sheet-backdrop');
+    this.list = document.getElementById('basemap-list');
+    this.closeBtn = document.getElementById('btn-close-basemap-sheet');
 
-    this.btn.addEventListener('click', () => {
-      const next = this.mapService.toggleBaseLayer();
-      // La etiqueta siempre indica el mapa AL QUE SE VA A CAMBIAR
-      // si se vuelve a tocar (patrón estándar de este tipo de botón).
-      this.label.textContent = next === 'satellite' ? 'MAPA' : 'SAT';
+    const current = BASEMAP_CATALOG.find((e) => e.key === this.mapService.currentBase);
+    if (current) this.label.textContent = current.short;
+
+    this._render();
+
+    this.btn.addEventListener('click', () => this.open());
+    this.closeBtn.addEventListener('click', () => this.close());
+    this.backdrop.addEventListener('click', () => this.close());
+  }
+
+  open() {
+    this._render();
+    this.sheet.classList.add('open');
+    this.backdrop.classList.add('open');
+  }
+
+  close() {
+    this.sheet.classList.remove('open');
+    this.backdrop.classList.remove('open');
+  }
+
+  _render() {
+    this.list.innerHTML = '';
+    BASEMAP_CATALOG.forEach((entry) => {
+      const saved = this.tileCache.isSaved(entry.key);
+      const active = this.mapService.currentBase === entry.key;
+
+      const item = document.createElement('div');
+      item.className = 'basemap-item' + (active ? ' active' : '');
+      item.innerHTML = `
+        <div class="basemap-swatch" style="background:${entry.swatch}"></div>
+        <div class="basemap-info">
+          <div class="basemap-title-row">
+            <strong>${entry.title}</strong>
+            <span class="pill-saved ${saved ? '' : 'hidden'}">Guardado</span>
+          </div>
+          <p>${entry.desc}</p>
+          <button type="button" class="btn-download-area">⬇️ Descargar esta zona para uso sin internet</button>
+          <div class="download-progress hidden">
+            <div class="download-progress-bar-track"><div class="download-progress-bar"></div></div>
+            <span class="download-progress-text"></span>
+          </div>
+        </div>
+        <div class="basemap-radio"></div>
+      `;
+
+      item.querySelector('.basemap-info').addEventListener('click', (e) => {
+        if (e.target.closest('.btn-download-area')) return;
+        this._select(entry.key);
+      });
+      item.querySelector('.basemap-swatch').addEventListener('click', () => this._select(entry.key));
+      item.querySelector('.basemap-radio').addEventListener('click', () => this._select(entry.key));
+      item.querySelector('.btn-download-area').addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._download(entry, item);
+      });
+
+      this.list.appendChild(item);
     });
+  }
+
+  _select(key) {
+    this.mapService.setBaseLayer(key);
+    const entry = BASEMAP_CATALOG.find((e) => e.key === key);
+    if (entry) this.label.textContent = entry.short;
+    this._render();
+  }
+
+  async _download(entry, item) {
+    const btn = item.querySelector('.btn-download-area');
+    const progressWrap = item.querySelector('.download-progress');
+    const progressBar = item.querySelector('.download-progress-bar');
+    const progressText = item.querySelector('.download-progress-text');
+
+    btn.disabled = true;
+    btn.textContent = 'Preparando…';
+    progressWrap.classList.remove('hidden');
+    progressBar.style.width = '0%';
+
+    const result = await this.tileCache.downloadArea(entry, this.mapService.getMap(), {
+      onProgress: (done, total) => {
+        const pct = total ? Math.round((done / total) * 100) : 0;
+        progressBar.style.width = pct + '%';
+        progressText.textContent = `Descargando… ${done}/${total} teselas`;
+      },
+    });
+
+    if (result.ok) {
+      progressText.textContent = result.partial
+        ? `✓ Guardado parcial (${result.tileCount} de ${result.total} teselas — algunas fallaron, puede volver a tocar "Descargar" para completarlas)`
+        : `✓ Guardado (${result.tileCount} teselas)`;
+      await new Promise((r) => setTimeout(r, result.partial ? 2200 : 1200));
+      this._render();
+      return;
+    }
+
+    if (result.reason === 'too_many') {
+      progressText.textContent = `La zona es muy grande (${result.count} teselas). Acerque el mapa (haga zoom) y vuelva a intentar.`;
+    } else if (result.reason === 'offline') {
+      progressText.textContent = 'Sin conexión ahora mismo — conéctese a internet para descargar esta zona.';
+    } else if (result.reason === 'network') {
+      progressText.textContent = 'No se pudo descargar ninguna tesela (revise su conexión) e inténtelo de nuevo.';
+    } else {
+      progressText.textContent = 'No se pudo completar la descarga, inténtelo de nuevo.';
+    }
+    btn.disabled = false;
+    btn.textContent = '⬇️ Descargar esta zona para uso sin internet';
   }
 }
 
@@ -5157,7 +5586,8 @@ class AppController {
     this.geoService = new GeolocationService();
     this.uiController = new UIController(this.mapService, this.geoService);
     window.__uiController = this.uiController; // acceso desde otros controllers para stopFollowing()
-    this.basemapToggleController = new BasemapToggleController(this.mapService);
+    this.tileCacheService = new TileCacheService();
+    this.basemapSheetController = new BasemapSheetController(this.mapService, this.tileCacheService);
     this.gotoCoordinatesController = new GotoCoordinatesController(this.mapService, this.geoService);
 
     // Módulo de registro de suministro (acometida → escaneo → forma → fotos)
