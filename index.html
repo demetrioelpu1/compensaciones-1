@@ -2604,6 +2604,15 @@ class GISLayerService {
     { id: 'tramosBT',      label: 'Tramos de Red BT',        geomKind: 'line',  color: '#4FA3E3', shape: 'line' },
   ];
 
+  // Zoom mínimo para mostrar postes/subestaciones en el mapa. Por
+  // debajo de este nivel se ocultan por completo (nada de círculos
+  // con números agrupando cantidades) — recién aparecen, ya como
+  // postes/subestaciones individuales (sin agrupar, ver
+  // disableClusteringAtZoom más abajo, que usa el mismo valor), al
+  // acercarse bastante. Los tramos de red (líneas) no se ven
+  // afectados por esto, siempre se muestran.
+  static MIN_ZOOM_POINTS = 19;
+
   constructor(map, loaderService, persistenceService) {
     this.map = map;
     this.loaderService = loaderService;
@@ -2621,7 +2630,7 @@ class GISLayerService {
           ? L.markerClusterGroup({
               maxClusterRadius: 55,
               spiderfyOnMaxZoom: true,
-              disableClusteringAtZoom: 19,
+              disableClusteringAtZoom: GISLayerService.MIN_ZOOM_POINTS,
               iconCreateFunction: (cluster) => this._buildClusterIcon(cluster, cat),
             })
           : L.layerGroup(),
@@ -2637,10 +2646,37 @@ class GISLayerService {
     });
 
     this._changeHandlers = [];
+
+    // Al acercar/alejar el mapa, muestra u oculta automáticamente
+    // las capas de puntos (postes, subestaciones) según el zoom
+    // mínimo — ver MIN_ZOOM_POINTS y _syncVisibility.
+    this.map.on('zoomend', () => this._syncAllPointVisibility());
   }
 
   onChange(handler) { this._changeHandlers.push(handler); }
   _notify() { this._changeHandlers.forEach(h => h(this.getSummary())); }
+
+  // Decide si la capa "categoryId" debería estar en el mapa ahora
+  // mismo (según su interruptor + el zoom actual, si es una capa de
+  // puntos) y la agrega/quita si hace falta.
+  _syncVisibility(categoryId) {
+    const cat = GISLayerService.CATEGORIES.find(c => c.id === categoryId);
+    const st = this.state[categoryId];
+    if (!cat || !st) return;
+
+    const zoomOk = cat.geomKind !== 'point' || this.map.getZoom() >= GISLayerService.MIN_ZOOM_POINTS;
+    const shouldShow = st.visible && zoomOk;
+    const isShown = this.map.hasLayer(st.group);
+
+    if (shouldShow && !isShown) st.group.addTo(this.map);
+    else if (!shouldShow && isShown) this.map.removeLayer(st.group);
+  }
+
+  _syncAllPointVisibility() {
+    GISLayerService.CATEGORIES.forEach((cat) => {
+      if (cat.geomKind === 'point') this._syncVisibility(cat.id);
+    });
+  }
 
   getSummary() {
     return GISLayerService.CATEGORIES.map(cat => ({
@@ -2681,7 +2717,7 @@ class GISLayerService {
     st.fileNames.push(file.name);
     st.geojson.features.push(...(geojson.features || []));
 
-    if (st.visible && !this.map.hasLayer(st.group)) st.group.addTo(this.map);
+    this._syncVisibility(categoryId);
 
     // Encuadrar el mapa a lo recién cargado
     const bounds = leafletLayer.getBounds();
@@ -2721,7 +2757,7 @@ class GISLayerService {
       st.fileNames = record.fileNames || [];
       st.geojson = record.geojson;
 
-      if (st.visible) st.group.addTo(this.map);
+      this._syncVisibility(record.categoryId);
     });
 
     this._notify();
@@ -2763,11 +2799,7 @@ class GISLayerService {
   toggleCategory(categoryId) {
     const st = this.state[categoryId];
     st.visible = !st.visible;
-    if (st.visible) {
-      st.group.addTo(this.map);
-    } else {
-      this.map.removeLayer(st.group);
-    }
+    this._syncVisibility(categoryId);
     this._saveVisibilityPref(categoryId, st.visible);
     this._notify();
   }
@@ -3142,9 +3174,15 @@ class LayerPanelController {
         : cat.shape === 'triangle' ? 'border-radius:0 0 3px 0;'
         : 'border-radius:50%;';
 
-      const filesHint = cat.fileNames.length
+      let filesHint = cat.fileNames.length
         ? `${cat.fileNames.length} archivo${cat.fileNames.length > 1 ? 's' : ''}`
         : 'sin datos';
+      // Postes/subestaciones solo se ven acercando bastante el mapa
+      // (ver GISLayerService.MIN_ZOOM_POINTS) — se avisa aquí para
+      // que no parezca que la capa no cargó.
+      if (cat.geomKind === 'point' && cat.count > 0) {
+        filesHint += ' · se ve acercando el mapa';
+      }
 
       chip.innerHTML = `
         <span class="${dotClass}" style="background:${cat.color};${dotShape}"></span>
