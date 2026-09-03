@@ -315,16 +315,19 @@
   #basemap-sheet{
     position:absolute; left:0; right:0; bottom:0;
     max-height:76vh; overflow-y:auto;
-    background:var(--bar-bg); border-top:1px solid var(--line);
-    border-radius:18px 18px 0 0;
-    box-shadow:0 -8px 28px rgba(0,0,0,.45);
-    z-index:1450; padding:8px 16px 18px;
+    /* El fondo sólido de antes quedó solo en .sheet-body (más abajo)
+       — el encabezado (arriba, con el título y la "X") ahora queda
+       TRANSPARENTE a propósito, para no tapar el mapa que está
+       detrás mientras el panel está abierto. */
+    background:transparent;
+    z-index:1450; padding:8px 16px 0;
     transform:translateY(105%); transition:transform .25s ease;
   }
   #basemap-sheet.open{ transform:translateY(0); }
 
   #basemap-sheet .sheet-handle{
     width:40px; height:4px; border-radius:3px; background:var(--line);
+    box-shadow:0 1px 4px rgba(0,0,0,.6); /* visible aunque el fondo detrás sea claro */
     margin:2px auto 12px;
   }
   #basemap-sheet .sheet-header{
@@ -332,6 +335,7 @@
   }
   #basemap-sheet .sheet-header h2{
     margin:0; font-size:16px; font-weight:700; flex:1; min-width:0;
+    text-shadow:0 1px 6px rgba(0,0,0,.85); /* legible sobre cualquier mapa, al ser transparente */
   }
   #basemap-sheet .close-btn, #basemap-sheet .back-btn{
     width:30px; height:30px; border-radius:8px; background:var(--bar-bg-2);
@@ -339,9 +343,19 @@
     display:flex; align-items:center; justify-content:center;
   }
   #basemap-sheet .back-btn.hidden{ display:none; }
+
+  /* Cuerpo del panel (subtítulo + lista + pie): aquí sí queda el
+     fondo sólido de siempre, para que las tarjetas de mapas se
+     sigan leyendo bien. */
+  #basemap-sheet .sheet-body{
+    background:var(--bar-bg); border-top:1px solid var(--line);
+    border-radius:18px 18px 0 0;
+    box-shadow:0 -8px 28px rgba(0,0,0,.45);
+    margin:10px -16px 0; padding:12px 16px 18px;
+  }
   #basemap-sheet .sheet-subtitle{
     font-family:var(--mono); font-size:10.5px; letter-spacing:.05em;
-    color:var(--text-dim); margin:10px 2px 12px;
+    color:var(--text-dim); margin:0 2px 12px;
   }
   #basemap-sheet .sheet-footnote{
     font-size:11.5px; color:var(--text-dim); margin:14px 2px 0; line-height:1.5;
@@ -1300,9 +1314,11 @@
           <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
-      <p class="sheet-subtitle" id="basemap-sheet-subtitle">ELIGE EL MAPA PARA TRABAJAR EN CAMPO</p>
-      <div class="basemap-list" id="basemap-list"></div>
-      <div class="sheet-footnote" id="basemap-sheet-footer"></div>
+      <div class="sheet-body">
+        <p class="sheet-subtitle" id="basemap-sheet-subtitle">ELIGE EL MAPA PARA TRABAJAR EN CAMPO</p>
+        <div class="basemap-list" id="basemap-list"></div>
+        <div class="sheet-footnote" id="basemap-sheet-footer"></div>
+      </div>
     </div>
 
     <button id="btn-sel-files" title="Archivos SEL">
